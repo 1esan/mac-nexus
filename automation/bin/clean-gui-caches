@@ -1,0 +1,83 @@
+#!/bin/zsh
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+RUNNING_APPS=()
+for app in "Google Chrome" "Yandex" "Obsidian" "Orca" "Telegram" "Code" "Discord" "Notion" "Figma"; do
+  if pgrep -x "$app" >/dev/null 2>&1; then
+    RUNNING_APPS+=("$app")
+  fi
+done
+
+if (( ${#RUNNING_APPS[@]} > 0 )); then
+  echo "ERROR: All target GUI apps must be QUIT before clearing caches (protects SQLite WAL & profiles)."
+  echo "Still running:"
+  for a in "${RUNNING_APPS[@]}"; do
+    echo "  - $a"
+  done
+  exit 1
+fi
+
+setopt local_options nullglob
+
+TARGET_DIRS=(
+  "$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram"/*/temp
+  "$HOME/Library/Containers/ru.keepcoder.Telegram/Data/tmp"
+  "$HOME/Library/Caches/orca-updater"
+  "$HOME/Library/Caches/Google/Chrome"/*/Cache
+  "$HOME/Library/Caches/Google/Chrome"/*/Code\ Cache
+  "$HOME/Library/Caches/Google/Chrome for Testing"/*/Cache
+  "$HOME/Library/Caches/Google/Chrome for Testing"/*/Code\ Cache
+  "$HOME/Library/Caches/Yandex/YandexBrowser"/*/Cache
+  "$HOME/Library/Caches/Yandex/YandexBrowser"/*/Code\ Cache
+  "$HOME/Library/Application Support/Google/Chrome"/*/{GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/Yandex/YandexBrowser"/ShaderCache
+  "$HOME/Library/Application Support/Yandex/YandexBrowser"/*/{GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/Code"/{Cache,Code\ Cache,GPUCache,CachedData,CachedExtensionVSIXs,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/obsidian"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/obsidian/Partitions"/*/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/orca"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/orca/Partitions"/*/{Cache,Code\ Cache,GPUCache}
+  "$HOME/Library/Application Support/discord"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/Notion"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/Notion/Partitions"/*/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  "$HOME/Library/Application Support/Figma/DesktopProfile"/*/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+)
+
+EXISTING_DIRS=()
+echo "All target GUI apps are confirmed QUIT. Safe cache directories found (never touches User/, IndexedDB/, or *.db*):"
+for d in "${TARGET_DIRS[@]}"; do
+  if [[ -d "$d" ]]; then
+    EXISTING_DIRS+=("$d")
+    du -sh "$d" 2>/dev/null || true
+  fi
+done
+
+if (( ${#EXISTING_DIRS[@]} == 0 )); then
+  echo "No target GUI cache directories to clean."
+  exit 0
+fi
+
+printf "Clear contents of these %d cache directories? [y/N] " "${#EXISTING_DIRS[@]}"
+read -r confirm
+case "$confirm" in
+  [yY]|[yY][eE][sS]) ;;
+  *)
+    echo "Aborted. No changes made."
+    exit 0
+    ;;
+esac
+
+before_kb=$(df -k /System/Volumes/Data | awk 'NR==2 {print $4}')
+for d in "${EXISTING_DIRS[@]}"; do
+  rm -rf -- "$d"/*(N) "$d"/.[!.]*(N)
+done
+after_kb=$(df -k /System/Volumes/Data | awk 'NR==2 {print $4}')
+
+echo ""
+echo "Safe GUI cache cleanup complete."
+echo "Free space delta on /System/Volumes/Data: $(( (after_kb - before_kb) / 1024 )) MiB"
+df -h /System/Volumes/Data
+echo ""
+echo "TIP: Reboot macOS afterward so /private/var/folders/*/X/com.google.Chrome.code_sign_clone and OS caches clear cleanly."

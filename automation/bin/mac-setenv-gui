@@ -1,0 +1,23 @@
+#!/bin/zsh
+set -euo pipefail
+
+/bin/launchctl setenv XDG_CONFIG_HOME "$HOME/.config"
+/bin/launchctl setenv XDG_CACHE_HOME "$HOME/.cache"
+/bin/launchctl setenv XDG_DATA_HOME "$HOME/.local/share"
+/bin/launchctl setenv XDG_STATE_HOME "$HOME/.local/state"
+/bin/launchctl setenv UV_CACHE_DIR "$HOME/.cache/uv"
+
+_ssd="/Volumes/secret for mine"
+if [[ -d "$_ssd/01_AI_Models_and_Caches" ]]; then
+  /bin/launchctl setenv HF_HOME "$_ssd/01_AI_Models_and_Caches/huggingface"
+  /bin/launchctl setenv TORCH_HOME "$_ssd/01_AI_Models_and_Caches/torch"
+else
+  /bin/launchctl unsetenv HF_HOME >/dev/null 2>&1 || true
+  /bin/launchctl unsetenv TORCH_HOME >/dev/null 2>&1 || true
+fi
+
+if [[ -d "$_ssd/ollama_models" ]]; then
+  /bin/launchctl setenv OLLAMA_MODELS "$_ssd/ollama_models"
+else
+  /bin/launchctl unsetenv OLLAMA_MODELS >/dev/null 2>&1 || true
+fi

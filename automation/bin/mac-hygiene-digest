@@ -1,0 +1,103 @@
+#!/bin/zsh
+set -uo pipefail
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+
+STATE_DIR="$XDG_STATE_HOME/mac-hygiene"
+OUT_FILE="$STATE_DIR/digest_latest.md"
+TMP_FILE="$STATE_DIR/.digest_latest.md.tmp.$$"
+
+mkdir -p "$STATE_DIR"
+
+{
+  echo "# Mac Hygiene Digest ($(date '+%Y-%m-%d %H:%M:%S %Z'))"
+  echo ""
+  echo "## 1. Disk Space"
+  df -h /System/Volumes/Data
+  if [[ -d "/Volumes/secret for mine" ]]; then
+    echo ""
+    df -h "/Volumes/secret for mine"
+  fi
+
+  echo ""
+  echo "## 2. Mounted Disk Images (hdiutil info)"
+  if ! hdiutil info | grep -E "image-path"; then
+    echo "None mounted."
+  fi
+
+  echo ""
+  echo "## 3. organize check && organize sim (Dry-Run)"
+  if command -v organize >/dev/null 2>&1; then
+    organize check && organize sim
+  else
+    echo "organize not found in PATH"
+  fi
+
+  echo ""
+  echo "## 4. Project Build/Venv Artifacts (Read-Only Size Report)"
+  if [[ -d "$HOME/Projects" ]]; then
+    artifacts=$(find "$HOME/Projects" -maxdepth 3 -type d \( -name node_modules -o -name .venv -o -name venv -o -name target \) -exec du -sh {} + 2>/dev/null || true)
+    if [[ -n "$artifacts" ]]; then
+      echo "$artifacts"
+    else
+      echo "No matching project artifacts found."
+    fi
+  fi
+
+  echo ""
+  echo "## 5. Homebrew Cleanup Dry-Run (brew cleanup -n)"
+  if command -v brew >/dev/null 2>&1; then
+    brew_dry=$(brew cleanup -n 2>&1 || true)
+    if [[ -n "$brew_dry" ]]; then
+      echo "$brew_dry"
+    else
+      echo "Nothing to prune."
+    fi
+  fi
+
+  if command -v hf >/dev/null 2>&1; then
+    echo ""
+    echo "## 6. HuggingFace Cache Dry-Run"
+    hf cache prune --dry-run 2>&1 || true
+  fi
+
+  echo ""
+  echo "## 7. Electron / Browser / Telegram Safe Cache Sizes"
+  nullglob_was_set=0
+  [[ -o nullglob ]] && nullglob_was_set=1
+  setopt local_options nullglob
+  cache_paths=(
+    "$HOME/Library/Caches/orca-updater"
+    "$HOME/Library/Caches/Google/Chrome"/*/Cache
+    "$HOME/Library/Caches/Google/Chrome"/*/Code\ Cache
+    "$HOME/Library/Caches/Yandex/YandexBrowser"/*/Cache
+    "$HOME/Library/Caches/Yandex/YandexBrowser"/*/Code\ Cache
+    "$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram"/*/temp
+    "$HOME/Library/Containers/ru.keepcoder.Telegram/Data/tmp"
+    "$HOME/Library/Application Support/Code"/{Cache,Code\ Cache,GPUCache,CachedData,CachedExtensionVSIXs}
+    "$HOME/Library/Application Support/obsidian"/{Cache,Code\ Cache,GPUCache}
+    "$HOME/Library/Application Support/obsidian/Partitions"/*/{Cache,Code\ Cache,GPUCache}
+    "$HOME/Library/Application Support/orca"/{Cache,Code\ Cache,GPUCache}
+    "$HOME/Library/Application Support/orca/Partitions"/*/{Cache,Code\ Cache,GPUCache}
+    "$HOME/Library/Application Support/discord"/{Cache,Code\ Cache,GPUCache}
+    "$HOME/Library/Application Support/Notion"/{Cache,Code\ Cache,GPUCache}
+    "$HOME/Library/Application Support/Notion/Partitions"/*/{Cache,Code\ Cache,GPUCache}
+    "$HOME/Library/Application Support/Figma/DesktopProfile"/*/{Cache,Code\ Cache,GPUCache}
+  )
+  found_any=0
+  for p in "${cache_paths[@]}"; do
+    if [[ -e "$p" ]]; then
+      du -sh "$p" 2>/dev/null || true
+      found_any=1
+    fi
+  done
+  if [[ "$found_any" -eq 0 ]]; then
+    echo "No target cache directories present."
+  fi
+} > "$TMP_FILE" 2>&1
+
+mv "$TMP_FILE" "$OUT_FILE"
+
+osascript -e 'display notification "Review ~/.local/state/mac-hygiene/digest_latest.md, then run clean-approve" with title "Mac Hygiene Digest Ready"' >/dev/null 2>&1 || true

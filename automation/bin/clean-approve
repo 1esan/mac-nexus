@@ -1,0 +1,88 @@
+#!/bin/zsh
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+
+DIGEST_FILE="$XDG_STATE_HOME/mac-hygiene/digest_latest.md"
+if [[ -f "$DIGEST_FILE" ]]; then
+  echo "Latest digest: $DIGEST_FILE ($(wc -l < "$DIGEST_FILE" | tr -d ' ') lines)"
+else
+  echo "Note: $DIGEST_FILE not found yet. Run mac-hygiene-digest first if you want a dry-run preview."
+fi
+
+printf "Run human-gated cleanup (organize run, interactive kondo -o 30d, brew/uv/pip prune)? [y/N] "
+read -r confirm
+case "$confirm" in
+  [yY]|[yY][eE][sS]) ;;
+  *)
+    echo "Aborted. No changes made."
+    exit 0
+    ;;
+esac
+
+ELECTRON_SAFE=1
+# Guard against corrupting SQLite WAL files while Electron/browser apps are open.
+for app in "Google Chrome" "Yandex" "Obsidian" "Orca" "Telegram" "Code" "Discord" "Notion" "Figma"; do
+  if pgrep -x "$app" >/dev/null 2>&1; then
+    echo "[SKIP Electron caches] $app is running — quit it first to protect SQLite WAL."
+    ELECTRON_SAFE=0
+  fi
+done
+
+echo ""
+echo "=== Step 1: organize run (moves stale Downloads/screenshots -> Trash / SSD) ==="
+organize check && organize run
+
+echo ""
+echo "=== Step 2: kondo interactive review (>30d dormant project caches) ==="
+kondo -o 30d "$HOME/Projects"
+
+echo ""
+echo "=== Step 3: Native package & AI cache pruners ==="
+brew cleanup --prune=all
+if command -v uv >/dev/null 2>&1; then
+  uv cache prune --ci
+fi
+if [[ -x /opt/anaconda3/bin/python3 ]] && /opt/anaconda3/bin/python3 -m pip --version >/dev/null 2>&1; then
+  /opt/anaconda3/bin/python3 -m pip cache purge || true
+fi
+if [[ -x /opt/homebrew/bin/python3 ]] && /opt/homebrew/bin/python3 -m pip --version >/dev/null 2>&1; then
+  /opt/homebrew/bin/python3 -m pip cache purge || true
+fi
+if command -v hf >/dev/null 2>&1; then
+  hf cache prune || true
+fi
+
+if [[ "$ELECTRON_SAFE" -eq 1 ]]; then
+  echo ""
+  echo "=== Step 4: Safe Electron cache clear (all target apps verified closed; ELECTRON_SAFE=1) ==="
+  setopt local_options nullglob
+  safe_electron_caches=(
+    "$HOME/Library/Application Support/Code"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+    "$HOME/Library/Application Support/obsidian"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+    "$HOME/Library/Application Support/obsidian/Partitions"/*/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+    "$HOME/Library/Application Support/orca"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+    "$HOME/Library/Application Support/orca/Partitions"/*/{Cache,Code\ Cache,GPUCache}
+    "$HOME/Library/Application Support/discord"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+    "$HOME/Library/Application Support/Notion"/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+    "$HOME/Library/Application Support/Notion/Partitions"/*/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+    "$HOME/Library/Application Support/Figma/DesktopProfile"/*/{Cache,Code\ Cache,GPUCache,DawnGraphiteCache,DawnWebGPUCache}
+  )
+  for d in "${safe_electron_caches[@]}"; do
+    if [[ -d "$d" ]]; then
+      echo "Clearing $d"
+      rm -rf -- "$d"/*(N) "$d"/.[!.]*(N)
+    fi
+  done
+else
+  echo ""
+  echo "=== Step 4: Skipped Electron cache clear (ELECTRON_SAFE=0; running apps detected) ==="
+fi
+
+echo ""
+echo "=== Step 5: Disk Space ==="
+df -h /System/Volumes/Data

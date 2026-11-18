@@ -1,0 +1,82 @@
+# ~/.config/organize/config.yaml — Preview with `organize check && organize sim`, apply with `organize run`
+rules:
+  # 1. Stale installers in Downloads (>7 days since Date Added) -> Trash (undoable)
+  - name: "Downloads: trash stale installers (>7d)"
+    locations:
+      - path: ~/Downloads
+        max_depth: 1
+    filters:
+      - extension: [dmg, pkg, exe, iso]
+      - date_added:
+          days: 7
+          mode: older
+    actions:
+      - macos_tags: "review-delete (red)"
+      - trash
+
+  # 2. Screenshots (>14 days) unless tagged active/archive -> Trash
+  - name: "Downloads/Desktop: expire untagged screenshots (>14d)"
+    locations:
+      - path: ~/Downloads
+        max_depth: 2
+      - path: ~/Desktop
+        max_depth: 1
+    filters:
+      - name:
+          startswith: ["Screenshot", "Screen Shot", "Снимок экрана"]
+      - extension: [png, jpg, jpeg]
+      - date_added:
+          days: 14
+          mode: older
+      - not macos_tags: ["active (*)", "archive (*)"]
+    actions:
+      - macos_tags: "review-delete (red)"
+      - trash
+
+  # 3. Auto-tag newly arrived Downloads as inbox (orange) for 7-day SLA visibility
+  - name: "Downloads: tag new files as inbox"
+    locations:
+      - path: ~/Downloads
+        max_depth: 1
+    filters:
+      - date_added:
+          days: 7
+          mode: newer
+      - not macos_tags: ["inbox (*)", "active (*)", "heavy (*)", "archive (*)"]
+    actions:
+      - macos_tags: "inbox (orange)"
+
+  # 4. Large video/archive exports on Desktop or Downloads (>100 MB, >14d) -> External SSD when mounted
+  - name: "Offload heavy media (>100 MB, >14d) to External SSD if mounted"
+    locations:
+      - path: ~/Desktop
+        max_depth: 1
+      - path: ~/Downloads
+        max_depth: 1
+    filters:
+      - extension: [mov, mp4, mkv, tar, gz, 7z]
+      - size: "> 100 MB"
+      - date_added:
+          days: 14
+          mode: older
+      - python: |
+          import os
+          return os.path.ismount("/Volumes/secret for mine") and os.path.isdir("/Volumes/secret for mine/04_Media_Archive")
+    actions:
+      - macos_tags: "heavy (purple)"
+      - move:
+          dest: "/Volumes/secret for mine/04_Media_Archive/{date_added.strftime('%Y-%m')}/"
+          on_conflict: "rename_new"
+
+  # 5. Stale untouched files in Downloads (>30 days) -> flag for manual review (non-destructive)
+  - name: "Downloads: flag untouched files >30d for manual triage"
+    locations:
+      - path: ~/Downloads
+        max_depth: 1
+    filters:
+      - date_added:
+          days: 30
+          mode: older
+      - not macos_tags: ["review-delete (*)", "active (*)"]
+    actions:
+      - macos_tags: "review-delete (red)"
