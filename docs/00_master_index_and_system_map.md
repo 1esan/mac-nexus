@@ -10,7 +10,7 @@
 
 Система спроектирована по принципу **«двух синхронизированных контуров управления»**:
 1. **Интерактивный Web Cyber-HUD (`http://127.0.0.1:8790`)** — автономный веб-интерфейс (zero-CDN `HTML`/`CSS`/`JS`) поверх чистого stdlib-бэкенда Python 3.12+ (`server.py`, `scanner.py`, `executor.py`), запускаемый из `Mac Nexus.app` (`LSUIElement=true`) или [`Start_Mac_Nexus.command`](../Start_Mac_Nexus.command). По умолчанию работает в безопасном режиме `DRY-RUN`, проверяет `LIVE LOCK` перед показом и выполнением, переносит пользовательские файлы только в `~/.Trash` и телепортирует медиа на SSD строго после проверки **SHA-256 + byte size**.
-2. **Портативный комплект хост-автоматизации Stack 1 ([`automation/`](../automation/README.md))** — слой ОС, обеспечивающий гигиену независимо от браузера: единая XDG-среда (`~/.zshenv` + `LaunchAgent com.egor.env` через `launchctl setenv`), еженедельный 100% read-only воскресный дайджест (`com.egor.mac-hygiene-digest` -> `~/.local/state/mac-hygiene/digest_latest.md`), YAML-правила `organize` v3 (`~/.config/organize/config.yaml`) и интерактивные скрипты с `pgrep`-защитой SQLite WAL (`clean-approve`, `clean-gui-caches`).
+2. **Портативный комплект хост-автоматизации Stack 1** управляет XDG-средой для CLI и GUI, собирает воскресный дайджест без запуска очистки и включает YAML-правила `organize` v3 и интерактивные скрипты обслуживания. [Устройство и установка Stack 1](../automation/README.md)
 
 ---
 

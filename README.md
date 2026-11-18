@@ -70,10 +70,10 @@ flowchart TB
 | Вкладка / Панель | Основные возможности | Защита и поведение по умолчанию |
 |---|---|---|
 | **Orbital Telemetry Deck** | 3 реактора контуров (NVMe, SSD, SecondBrain), 5 чипов (RAM, Swap, DMG, Orca, одометр) | Учитывает macOS Purgeable и `SF_DATALESS` |
-| **01 · РАДАР ОЧИСТКИ** | Фильтры 9 категорий (`system_cache`, `app_orphans`, `ai_dev_deep`, `app_cache`, `pkg_cache` и др.), пороги `14д`/`30д`/`60д`, Smart Close для заблокированных кэшей | `DRY-RUN` включён; `Orca` и `VS Code` ЗАПРЕЩЕНЫ для Smart Close |
-| **02 · ГЛУБОКИЙ РАДАР** | X-Ray giants от 50/250/1024 MiB, sparse-aware `_physical_file_size`, Finder-reveal, Radar Action на SSD | Hotspot-файлы не удаляются, только перенос или reveal |
+| **01 · РАДАР ОЧИСТКИ** | Фильтры по 8 категориям, включая `pkg_cache` для Go и Cargo, пороги `14д`/`30д`/`60д`, Smart Close для заблокированных кэшей | `DRY-RUN` включён; `Orca` и `VS Code` ЗАПРЕЩЕНЫ для Smart Close |
+| **02 · ГЛУБОКИЙ РАДАР** | Поиск крупных файлов с учётом фактически занятых блоков, показ в Finder | Обычные файлы можно перенести на SSD или в Корзину. Для X-Ray объектов доступен только показ в Finder |
 | **03 · ТЕЛЕПОРТ МЕДИА** | Кандидаты `.mov`/`.mp4`/`.mkv` > 10 MiB с предпросмотром пути на SSD | Блокировка при отключённом SSD (`409`); SHA-256 + `fsync` |
-| **04 · ДУБЛИКАТЫ** | Поиск через `czkawka_cli` (`downloads`, `desktop`, `ssd_media`, `documents`) | 1-й файл (`ОРИГИНАЛ / СОХРАНИТЬ`) заблокирован; копии в `~/.Trash` |
+| **04 · ДУБЛИКАТЫ** | Поиск через `czkawka_cli` (`downloads`, `desktop`, `ssd_media`, `documents`) | HUD блокирует выбор первого файла группы (`ОРИГИНАЛ / СОХРАНИТЬ`). Выбранные копии перемещаются в `~/.Trash` |
 | **05 · КОРЗИНА** | Список `~/.Trash`, фильтрация `>30д`/`>7д`/выбранные, TCC-fallback с Finder Empty | Holo-подтверждение обязательно в боевом режиме |
 | **06 · ПУЛЬТ КОНТУРОВ** | Статус полок `01..99`, быстрый запуск утилит (`finder_trash`), чтение `digest_latest.md` | Строгий allowlist инструментов + модальное окно Holo |
 | **SSE Кибер-Терминал** | Потоковый лог `/api/events` (`[SCAN]`, `[LOCK-GUARD]`, `[SHA-256]`, `[DRY-RUN]`, `[DONE]`) | Буфер 350 строк, автоскролл, автопереподключение |
@@ -82,25 +82,29 @@ flowchart TB
 
 ## Быстрый старт
 
-### Вариант A — Desktop App Launcher (рекомендуется)
-Дважды кликните **`/Users/egorlabutin/Desktop/Mac Nexus.app`** (фоновый бандл с `LSUIElement=true`):
-- Если `http://127.0.0.1:8790/api/health` уже отвечает, сразу открывает Cyber-HUD в браузере по умолчанию.
-- Если сервер не запущен, поднимает `mac_nexus.server` в фоне, пишет логи в `~/.local/state/mac-nexus/server.log`, ждёт до 5 секунд готовности `/api/health` и открывает `http://127.0.0.1:8790`.
+Для запуска на macOS нужен Python 3.12 или новее. Сервер использует стандартную библиотеку Python.
 
-### Вариант B — Скрипт запуска `.command`
-Запустите [`Start_Mac_Nexus.command`](Start_Mac_Nexus.command) двойным кликом в Finder или из терминала:
+### Скрипт запуска из репозитория
+
+Откройте [`Start_Mac_Nexus.command`](Start_Mac_Nexus.command) в Finder или выполните из корня репозитория:
 ```zsh
-/Users/egorlabutin/Projects/mac-nexus/Start_Mac_Nexus.command
+./Start_Mac_Nexus.command
 ```
 
-### Вариант C — Ручной запуск через CLI
+Скрипт проверяет `/api/health` и при необходимости запускает сервер в фоне. После запуска он открывает `http://127.0.0.1:8790` в браузере. Лог сервера хранится в `~/.local/state/mac-nexus/server.log`.
+
+### Ручной запуск через CLI
+
+Этот вариант позволяет явно использовать нужный `python3`. Выполните из корня репозитория:
 ```zsh
-cd /Users/egorlabutin/Projects/mac-nexus
-PYTHONPATH=/Users/egorlabutin/Projects/mac-nexus/src \
-  /opt/anaconda3/bin/python3 -m mac_nexus.server --host 127.0.0.1 --port 8790
+PYTHONPATH=src python3 -m mac_nexus.server --host 127.0.0.1 --port 8790
 ```
 
-### Вариант D — Установка хост-автоматизации (Stack 1)
+### Локальный Desktop App Launcher
+
+Если на рабочем столе уже установлен `Mac Nexus.app`, его можно открыть двойным кликом. Бандл хранится отдельно от репозитория и использует тот же локальный сервер. [Устройство лаунчеров и сборка иконки](docs/06_cyber_hud_frontend_and_app_bundle.md#4-упаковка-лаунчеры-и-пайплайн-генерации-иконки)
+
+### Установка хост-автоматизации (Stack 1)
 Если требуется развернуть или восстановить на Mac CLI-правила `organize`, скрипты `~/.local/bin/*`, `~/.zshenv` и `LaunchAgents` (`com.egor.env`, `com.egor.mac-hygiene-digest`), следуйте пошаговой инструкции в [`automation/README.md`](automation/README.md).
 
 ---
@@ -130,7 +134,7 @@ mac-nexus/
 │   │   └── config.yaml                              # 5 правил organize v3 для Downloads / Desktop / SSD
 │   ├── bin/
 │   │   ├── mac-setenv-gui                           # Экспорт XDG и условных SSD AI-переменных в launchd
-│   │   ├── mac-hygiene-digest                       # 100% read-only генератор воскресного отчёта
+│   │   ├── mac-hygiene-digest                       # Воскресный отчёт без запуска очистки
 │   │   ├── clean-approve                            # Интерактивная очистка с pgrep-защитой SQLite WAL
 │   │   └── clean-gui-caches                         # Безопасная очистка кэшей закрытых GUI-приложений
 │   ├── launchd/
@@ -179,11 +183,11 @@ mac-nexus/
 
 1. **Loopback Binding (`127.0.0.1`) & CSRF-защита**
    - `NexusHTTPServer` в [`src/mac_nexus/server.py`](src/mac_nexus/server.py) привязывается **исключительно** к `127.0.0.1` (попытка передать `0.0.0.0` или внешний интерфейс вызывает `ValueError`).
-   - Каждый `POST /api/*` запрос обязан передавать заголовок `X-Mac-Nexus-Client: 1`; если присутствует `Origin`, он должен начинаться с `http://127.0.0.1:` или `http://localhost:` (иначе `HTTP 403`).
+   - Каждый запрос `POST /api/*` должен передавать `X-Mac-Nexus-Client: 1`. Если присутствует `Origin`, сервер проверяет схему `http` и имя хоста `127.0.0.1` или `localhost`. При отказе сервер возвращает `HTTP 403`.
    - Раздача `/static/*` блокирует path traversal (`..`, `/`, `\`, выход за пределы `static_dir`) и пропускает только `ALLOWED_STATIC_MIME`.
 
 2. **Server-Side Snapshot Allowlisting (никаких сырых путей и shell-строк)**
-   - Мутирующие и reveal-маршруты (`/api/execute`, `/api/offload`, `/api/smart-close-clean`, `/api/radar-action`, `/api/radar-reveal`, `/api/empty-trash`, `/api/trash-duplicates`) принимают **только** непрозрачные серверные идентификаторы (`item_ids`, `item_id`, `media_ids`, `radar_ids`, `radar_id`, `trash_ids`, `file_ids`), сгенерированные через `_stable_id()` (14 hex-символов SHA-256) и проверенные по активному `ScanSnapshot` (`items_by_id`, `offload_by_id`, `radar_by_id`, `trash_by_id`, `dup_files_by_id`).
+   - Для выбора конкретных объектов API использует серверные идентификаторы (`item_ids`, `item_id`, `media_ids`, `radar_ids`, `radar_id`, `trash_ids`, `file_ids`) и проверяет их по соответствующим реестрам `ScanSnapshot`. Очистка Корзины по возрасту выбирает записи из `trash_by_id`, а режим Finder вызывает системную очистку всей Корзины.
    - Произвольные пути файловой системы или команды из тела JSON отклоняются со статусом `HTTP 400`.
 
 3. **Динамическая защита `LIVE LOCK`**
@@ -211,26 +215,27 @@ mac-nexus/
 ## Проверка, тестирование и линтинг
 
 ```zsh
-# 1. Полный набор unit и интеграционных тестов (21/21)
-cd /Users/egorlabutin/Projects/mac-nexus
-PYTHONPATH=src /opt/anaconda3/bin/python3 -m pytest -v
+# 1. Из корня репозитория, с установленным pytest в Python 3.12+
+PYTHONPATH=src python3 -m pytest -v
 
 # 2. Проверка синтаксиса фронтенда (JavaScript)
 node --check src/mac_nexus/static/app.js
 
-# 3. Валидация скриптов запуска и Info.plist Desktop-приложения
+# 3. Валидация скрипта запуска и локального Desktop-приложения, если оно установлено
 zsh -n Start_Mac_Nexus.command
-zsh -n "/Users/egorlabutin/Desktop/Mac Nexus.app/Contents/MacOS/MacNexus"
-plutil -lint "/Users/egorlabutin/Desktop/Mac Nexus.app/Contents/Info.plist"
+if [[ -d "$HOME/Desktop/Mac Nexus.app" ]]; then
+  zsh -n "$HOME/Desktop/Mac Nexus.app/Contents/MacOS/MacNexus"
+  plutil -lint "$HOME/Desktop/Mac Nexus.app/Contents/Info.plist"
+fi
 
-# 4. Проверка скриптов и шаблонов портативной автоматизации
+# 4. Проверка скриптов портативной автоматизации
 zsh -n automation/zsh/zshenv.snippet.zsh
 for f in automation/bin/*; do zsh -n "$f"; done
 
 # 5. Проверка статуса работающего сервера (не останавливать при эксплуатации)
 curl -fsS http://127.0.0.1:8790/api/health
 
-# 6. Пересборка Retina .icns иконки (при изменении scripts/generate_icon.py)
-/opt/anaconda3/bin/python3 scripts/generate_icon.py
-file "/Users/egorlabutin/Desktop/Mac Nexus.app/Contents/Resources/AppIcon.icns"
+# 6. Сборка Retina-иконки при наличии Pillow и iconutil
+python3 scripts/generate_icon.py --output /tmp/MacNexusAppIcon.icns
+file /tmp/MacNexusAppIcon.icns
 ```

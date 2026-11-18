@@ -64,7 +64,7 @@ sequenceDiagram
 
 ### 1.3 Weekly Runbook (`2 мин` — Воскресенье 11:00)
 
-Каждое воскресенье в `11:00` системный агент [`com.egor.mac-hygiene-digest`](../automation/launchd/com.egor.mac-hygiene-digest.plist.tmpl) запускает [`mac-hygiene-digest`](../automation/bin/mac-hygiene-digest) в 100% read-only режиме, атомарно обновляет `~/.local/state/mac-hygiene/digest_latest.md` и выводит системное уведомление macOS.
+Каждое воскресенье в `11:00` установленный агент `com.egor.mac-hygiene-digest` собирает данные без очистки, атомарно обновляет отчёт и показывает уведомление macOS. При стандартном `XDG_STATE_HOME` отчёт находится в `~/.local/state/mac-hygiene/digest_latest.md`. [Шаблон LaunchAgent](../automation/launchd/com.egor.mac-hygiene-digest.plist.tmpl) · [Скрипт](../automation/bin/mac-hygiene-digest)
 
 **Шаг 1 · Просмотр отчёта в Mac Nexus HUD (15 сек):**
 1. Запустите **Mac Nexus** (двойной клик по `Mac Nexus.app` на Рабочем столе или [`Start_Mac_Nexus.command`](../Start_Mac_Nexus.command)).
@@ -205,7 +205,8 @@ sequenceDiagram
   ls -la /Volumes/
   mount | grep -i "secret" || echo "Not mounted"
   diskutil list external
-  launchctl getenv HF_HOME OLLAMA_MODELS
+  launchctl getenv HF_HOME
+  launchctl getenv OLLAMA_MODELS
   ```
 - **Исправление:**
   1. Если диск не отображается — физически переподключите USB-кабель SSD и дождитесь появления тома в `diskutil list external`.
@@ -213,15 +214,17 @@ sequenceDiagram
   3. После монтирования тома обновите GUI-переменные среды (`HF_HOME`, `TORCH_HOME`, `OLLAMA_MODELS`) и нажмите **«ОБНОВИТЬ»** в `Mac Nexus`:
      ```zsh
      ~/.local/bin/mac-setenv-gui
-     launchctl getenv HF_HOME TORCH_HOME OLLAMA_MODELS
+     for key in HF_HOME TORCH_HOME OLLAMA_MODELS; do
+       launchctl getenv "$key"
+     done
      ```
 
 ---
 
-### 2.5 Устаревшие идентификаторы `ScanSnapshot` (`HTTP 400 UnknownTargetError`)
+### 2.5 Идентификатор отсутствует в `ScanSnapshot` (`HTTP 400 UnknownTargetError`)
 
 - **Симптом:** Запрос к `POST /api/execute`, `POST /api/offload` или `POST /api/trash-duplicates` возвращает `HTTP 400` с ошибкой вида `"Неизвестный или устаревший идентификатор: ..."`, `"Неизвестный media_id: ..."` или `"Неизвестный file_id дубликата: ..."`.
-- **Причина:** Реестр разрешённых целей [`ScanSnapshot`](../src/mac_nexus/scanner.py#L334-L341) (`items_by_id`, `offload_by_id`, `dup_files_by_id`, `radar_by_id`, `trash_by_id`) хранится **в оперативной памяти** запущенного процесса сервера ([`NexusAppContext`](../src/mac_nexus/server.py#L54-L64)) и никогда не принимает произвольные пути от клиента. При перезапуске сервера или при отправке ID дубликата/корзины, уже удалённого ранее (`pop` в `trash_duplicate_files` или `purge_trash_items`), ID отсутствует в активном snapshot.
+- **Причина.** Реестр целей хранится в памяти процесса и очищается при перезапуске. Записи обычного скана, Deep Radar и дубликатов дополняют реестр, а скан Корзины заменяет его часть целиком. После успешного перемещения дубликата или удаления записи из Корзины её ID исключается из реестра. [Жизненный цикл `ScanSnapshot`](04_backend_scanner_executor_and_security.md#синхронизация-состояния-в-nexusappcontext)
 - **Команда диагностики:**
   ```zsh
   curl -fsS http://127.0.0.1:8790/api/health
@@ -229,8 +232,8 @@ sequenceDiagram
   ps -o pid,lstart,command -p "$(lsof -t -nP -iTCP:8790 -sTCP:LISTEN)"
   ```
 - **Исправление:**
-  - В HUD нажмите **«Скан»** (`GET /api/scan?older_days=...`) или **«Сканировать дубликаты»** (`POST /api/duplicates`) — реестр `ctx.snapshot` заново заполнится серверными хэш-ID, после чего операцию можно запускать.
-  - В CLI-скриптах всегда получайте свежие `id` из `GET /api/scan` (или `POST /api/duplicates`) в рамках того же живого `pid` перед вызовом `POST /api/execute` / `POST /api/offload`.
+  - Повторите сканирование в нужной вкладке HUD и выберите цель из нового результата.
+  - В CLI получите ID из соответствующего маршрута сканирования в том же процессе сервера. Например, для `/api/execute` и `/api/offload` используйте `GET /api/scan`.
 
 ---
 
@@ -284,7 +287,9 @@ sequenceDiagram
      ```zsh
      launchctl kickstart -k "gui/$(id -u)/com.egor.env"
      launchctl kickstart -k "gui/$(id -u)/com.egor.mac-hygiene-digest"
-     launchctl getenv XDG_CONFIG_HOME UV_CACHE_DIR HF_HOME OLLAMA_MODELS
+     for key in XDG_CONFIG_HOME UV_CACHE_DIR HF_HOME OLLAMA_MODELS; do
+       launchctl getenv "$key"
+     done
      ```
   4. Если обновляли `HF_HOME` / `OLLAMA_MODELS` на лету, перезапустите соответствующие GUI-приложения (`Cmd+Q` → запуск заново), чтобы они унаследовали свежую среду `launchd`.
 
@@ -304,30 +309,30 @@ sequenceDiagram
 ### 3.1 Полный набор проверок (Copy-Paste Ready)
 
 ```zsh
-cd /Users/egorlabutin/Projects/mac-nexus
+# Из корня репозитория, с установленным pytest в Python 3.12+
 
 # 1. Unit & Integration тесты бэкенда (21 тест в tests/test_mac_nexus.py)
-PYTHONPATH=src /opt/anaconda3/bin/python3 -m pytest -v
+PYTHONPATH=src python3 -m pytest -v
 
 # 2. Проверка синтаксиса фронтенда (Zero-CDN Vanilla JS)
 node --check src/mac_nexus/static/app.js
 
 # 3. Проверка синтаксиса Zsh для лаунчеров и портативных скриптов automation/
 zsh -n Start_Mac_Nexus.command
-zsh -n "/Users/egorlabutin/Desktop/Mac Nexus.app/Contents/MacOS/MacNexus"
-zsh -n automation/zsh/zshenv.snippet.zsh
-zsh -n automation/bin/mac-setenv-gui \
-       automation/bin/mac-hygiene-digest \
-       automation/bin/clean-approve \
-       automation/bin/clean-gui-caches
+if [[ -d "$HOME/Desktop/Mac Nexus.app" ]]; then
+  zsh -n "$HOME/Desktop/Mac Nexus.app/Contents/MacOS/MacNexus"
+  plutil -lint "$HOME/Desktop/Mac Nexus.app/Contents/Info.plist"
+fi
+for f in automation/zsh/zshenv.snippet.zsh automation/bin/*; do
+  zsh -n "$f" || break
+done
 
-# 4. Проверка Info.plist приложения и рендера LaunchAgent-шаблонов
-plutil -lint "/Users/egorlabutin/Desktop/Mac Nexus.app/Contents/Info.plist"
+# 4. Проверка рендера LaunchAgent-шаблонов
 sed "s|__HOME__|$HOME|g" automation/launchd/com.egor.env.plist.tmpl | plutil -lint -
 sed "s|__HOME__|$HOME|g" automation/launchd/com.egor.mac-hygiene-digest.plist.tmpl | plutil -lint -
 
-# 5. Проверка конфигурации organize (read-only симуляция)
-organize check && organize sim
+# 5. Проверка схемы конфигурации organize из репозитория
+organize check automation/organize/config.yaml
 
 # 6. Live API Health & CSRF-проверка работающего сервера (127.0.0.1:8790)
 curl -fsS http://127.0.0.1:8790/api/health
@@ -353,11 +358,11 @@ curl -s -o /dev/null -w "CSRF_NO_HEADER_HTTP=%{http_code}\n" \
 
 ## 4. Инженерная дорожная карта `v2.0` (DELIVERED) и `v2.1+`
 
-Релиз **`v2.0.0`** (`NEX-004`–`NEX-006` **DELIVERED**) полностью реализует: 3-контурную телеметрию, Радар очистки с 9 категориями (`system_cache`, `app_orphans`, `ai_dev_deep`, `app_cache`, `pkg_cache`, `downloads_inbox`, `dev_projects`, `ghost_dmgs`, `go`/`cargo`), `LIVE LOCK` защиту, Smart Close (с HARD-запретом для `Orca`/`VS Code`), Глубокий Радар (sparse-aware), Корзину (TCC-fallback), 6 вкладок Cyber-HUD, 16 HTTP маршрутов и 21 pytest-тест. Дальнейшее развитие разбито на этапы `v2.1+` при сохранении **Python 3.12+ stdlib only** и нулевых внешних CDN.
+В **v2.0.0** доступны телеметрия трёх контуров, Радар очистки с восемью категориями, Smart Close, Глубокий Радар, телепорт с проверкой SHA-256, поиск дубликатов и управление Корзиной. Go и Cargo входят в `pkg_cache`. Версия включает 17 HTTP/SSE-маршрутов (2 для статики и 15 `/api/*`) и 21 автотест.
 
 | Версия / Тикет | Название и приоритет | Планируемые возможности и затрагиваемые модули | Инженерные инварианты |
 | :--- | :--- | :--- | :--- |
-| **`v2.0.0` · `NEX-004–006`** | **✅ DELIVERED — AI Telemetry, Deep Radar, Smart Close, Trash UI** | • 9 категорий Radar (`system_cache`, `app_orphans`, `ai_dev_deep`, `app_cache`, `pkg_cache`, `go`, `cargo`, ...). <br>• Вкладка Глубокий Радар: sparse-aware `_physical_file_size`, `scan_deep_radar`, Radar Action (Trash / SSD), Finder Reveal.<br>• Вкладка Корзина: `scan_trash`, TCC-fallback, `purge_trash_items` (selected / older_than / finder_empty).<br>• Smart Close: `start_smart_close_clean_job` (10s poll, HARD-FORBIDDEN для Orca/VS Code).<br>• 6 вкладок HUD; 21 pytest-тест; 16 HTTP маршрутов. | Все ограничения stdlib-only сохранены; никаких рисков для Orca worktrees |
+| **`v2.0.0` · `NEX-004–006`** | **Реализовано** | Восемь категорий Радара очистки, шесть вкладок HUD, Глубокий Радар с учётом занятых блоков, Корзина с Finder fallback, Smart Close с ожиданием закрытия приложения до 10 секунд. | Smart Close возвращает `409` для Orca и VS Code, включая `DRY-RUN`. |
 | **`v2.1` · `NEX-007`** | **LaunchAgents, `tmutil` & Perceptual Media Control** | • Панель статуса `com.egor.env` и `com.egor.mac-hygiene-digest` (`launchctl list`) и проверка `tmutil isexcluded` + `tmutil listlocalsnapshots /` во вкладке `06 · ПУЛЬТ КОНТУРОВ` ([`app.js`](../src/mac_nexus/static/app.js), [`server.py`](../src/mac_nexus/server.py)).<br>• Опциональный перцептивный поиск похожих изображений/видео через `czkawka_cli image` / `video` с явным сохранением защиты `.photoslibrary`. | Только allowlist read-only запросы к `launchctl` и `tmutil`; защита `Photos Library.photoslibrary` в `is_protected_path` |
 | **`v2.2` · `NEX-008`** | **3-2-1 Backup Orchestrator & Snapshot Safety** | • Телеметрия подключённого выделенного диска Time Machine (`tmutil destinationinfo -X`, контроль свежести последнего бэкапа).<br>• Мониторинг зашифрованного off-site бэкапа `restic` (Backblaze B2 / R2 / S3) с `--exclude-xattr`.<br>• Поддержка атомарных read-only APFS-снапшотов (`tmutil localsnapshot` + `mount_apfs -o rdonly`) для консистентного бэкапа живых SQLite WAL баз (`Orca`, `Codex`, `Hermes`) и SHA-256 верификация манифестов `90_Cold_Archive/`. | Никаких токенов/ключей S3/restic внутри репозитория и HTTP API; только статус и безопасные триггеры через `ScanSnapshot` |
 

@@ -219,7 +219,7 @@ flowchart TD
 
 ### 4.1. Идемпотентный запуск (`Start_Mac_Nexus.command` и `Mac Nexus.app`)
 
-Оба лаунчера — [`Start_Mac_Nexus.command`](../Start_Mac_Nexus.command) (`55` строк) и исполняемый скрипт внутри бандла `/Users/egorlabutin/Desktop/Mac Nexus.app/Contents/MacOS/MacNexus` (`53` строки) — используют единый идемпотентный сценарий запуска сервера на `127.0.0.1:8790`:
+[`Start_Mac_Nexus.command`](../Start_Mac_Nexus.command) из репозитория и скрипт внутри локального бандла `~/Desktop/Mac Nexus.app/Contents/MacOS/MacNexus` используют один сценарий запуска сервера на `127.0.0.1:8790`. Бандл устанавливается отдельно и имеет собственную версию в `Info.plist`. Версию бэкенда показывает `GET /api/health`.
 
 ```mermaid
 flowchart TD
@@ -237,7 +237,7 @@ flowchart TD
 Ключевые параметры бандла `/Users/egorlabutin/Desktop/Mac Nexus.app`:
 
 - **Структура `Contents/`:**
-  - `Contents/Info.plist` (`32` строки): `CFBundleIdentifier=local.egorlabutin.mac-nexus`, `CFBundleDisplayName=Mac Nexus`, `CFBundleExecutable=MacNexus`, `CFBundleIconFile=AppIcon.icns`, `CFBundleShortVersionString=2.0.0`, `LSMinimumSystemVersion=13.0`, `LSUIElement=true`, `NSHighResolutionCapable=true`.
+  - `Contents/Info.plist` задаёт `CFBundleIdentifier=local.egorlabutin.mac-nexus`, `CFBundleDisplayName=Mac Nexus`, `CFBundleExecutable=MacNexus`, `CFBundleIconFile=AppIcon.icns`, `LSMinimumSystemVersion=13.0`, `LSUIElement=true` и `NSHighResolutionCapable=true`. У установленного лаунчера `CFBundleShortVersionString=1.0.0`.
   - Флаг `LSUIElement=true` переводит приложение-лаунчер в агентный режим macOS: после открытия браузера в Dock не остаётся зависшая иконка shell-скрипта и не открывается окно Terminal.
   - `Contents/MacOS/MacNexus` отличается от `Start_Mac_Nexus.command` тем, что при отсутствии Python 3 или таймауте `5s` показывает нативное системное уведомление через `/usr/bin/osascript -e 'display notification ...'` и фиксирует диагностику в `~/.local/state/mac-nexus/server.log`.
 

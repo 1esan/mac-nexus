@@ -43,7 +43,7 @@ Before modifying any subsystem, start from the canonical documentation rather th
 
 4. **Protected Zones & Trash-Instead-of-`rm` Discipline**
    - `is_protected_path()` MUST always block `.app` / `.photoslibrary` bundles, `~/.Trash` internals, `PROTECTED_DESKTOP_DIRS`, `secondbrain_dir`, `SSD_LIVE_HEAVY_DIRS`, and active `Orca` worktrees from scan, deletion, or offload.
-   - Never run `rm -rf` on user downloads or duplicate files: always move files to `~/.Trash` via `move_to_trash()` with collision-safe suffixes (or run `organize`). Keep `czkawka_cli` duplicate index `0` (oldest file) protected as original.
+   - Always move user downloads and duplicate files to `~/.Trash` via `move_to_trash()` with collision-safe suffixes (or use `organize` for Downloads triage). Preserve the first file in each duplicate group as the original. The HUD disables its selection. API clients must preserve it when choosing files to move.
    - Never invoke `kondo` blindly during `/api/scan` (`kondo` has no `--dry-run`). Evaluate `~/Projects/*` build artifact ages in Python against `older_days` while excluding live `Orca` worktrees.
    - Never treat iCloud `SF_DATALESS` (`0x40000000`) stubs as real local bytes or delete them.
 

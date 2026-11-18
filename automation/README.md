@@ -32,7 +32,7 @@ flowchart LR
 | :--- | :--- | :--- |
 | [`organize/config.yaml`](organize/config.yaml) | `~/.config/organize/config.yaml` | 5 правил триажа: устаревшие инсталляторы (`>7d`), скриншоты (`>14d`), тег `inbox (orange)` (`<7d`), перенос тяжёлых медиа (`>100 MB`, `>14d`) на `/Volumes/secret for mine/04_Media_Archive/`, пометка старых файлов (`>30d`). |
 | [`bin/mac-setenv-gui`](bin/mac-setenv-gui) | `~/.local/bin/mac-setenv-gui` | Инжектирует `XDG_*` и `UV_CACHE_DIR` в GUI-домен через `/bin/launchctl setenv`; устанавливает `HF_HOME`, `TORCH_HOME`, `OLLAMA_MODELS` **только при наличии каталогов на SSD** (иначе `unsetenv`). |
-| [`bin/mac-hygiene-digest`](bin/mac-hygiene-digest) | `~/.local/bin/mac-hygiene-digest` | 100% read-only сборщик еженедельного отчёта (`df -h`, `hdiutil info`, `organize sim`, `du -sh` артефактов, `brew cleanup -n`, `hf cache prune --dry-run`, размеры GUI-кэшей) + уведомление. |
+| [`bin/mac-hygiene-digest`](bin/mac-hygiene-digest) | `~/.local/bin/mac-hygiene-digest` | Собирает данные без очистки файлов, записывает еженедельный отчёт и показывает уведомление. |
 | [`bin/clean-approve`](bin/clean-approve) | `~/.local/bin/clean-approve` | Интерактивный оркестратор уборки с воротами `[y/N]`: `organize run`, `kondo -o 30d`, `brew/uv/pip/hf`, и очистка Electron-кэшей **только при `ELECTRON_SAFE=1`** (проверка `pgrep -x`). |
 | [`bin/clean-gui-caches`](bin/clean-gui-caches) | `~/.local/bin/clean-gui-caches` | Выделенная очистка кэшей браузеров, Telegram и Electron. Завершается с `exit 1` (**fail-closed**), если запущено хотя бы одно из 9 GUI-приложений (защита SQLite WAL). |
 | [`launchd/com.egor.env.plist.tmpl`](launchd/com.egor.env.plist.tmpl) | `~/Library/LaunchAgents/com.egor.env.plist` | Шаблон агента `RunAtLoad`, запускающего `mac-setenv-gui` при входе в сессию macOS. Использует токен `__HOME__`. |
@@ -162,12 +162,10 @@ done
 ### 5.1. Синтаксис скриптов и валидация конфигов
 
 ```zsh
-zsh -n \
-  automation/zsh/zshenv.snippet.zsh \
-  automation/bin/mac-setenv-gui \
-  automation/bin/mac-hygiene-digest \
-  automation/bin/clean-approve \
-  automation/bin/clean-gui-caches
+for f in automation/zsh/zshenv.snippet.zsh automation/bin/*; do
+  zsh -n "$f" || break
+done
+organize check automation/organize/config.yaml
 ```
 
 ### 5.2. Проверка XDG и GUI-переменных окружения
@@ -195,15 +193,16 @@ launchctl getenv OLLAMA_MODELS
 # Проверка схемы и полный сухой прогон (0 изменений на диске)
 organize check && organize sim
 
-# Генерация первого отчёта (100% read-only)
+# Генерация первого локального отчёта без очистки файлов
 "$HOME/.local/bin/mac-hygiene-digest"
 
 # Просмотр результата
-ls -lh "$HOME/.local/state/mac-hygiene/digest_latest.md"
-head -n 40 "$HOME/.local/state/mac-hygiene/digest_latest.md"
+digest="${XDG_STATE_HOME:-$HOME/.local/state}/mac-hygiene/digest_latest.md"
+ls -lh "$digest"
+head -n 40 "$digest"
 ```
 
-После запуска дайджест также доступен прямо в графическом окне **Mac Nexus Cyber-HUD** во вкладке `06 · ПУЛЬТ КОНТУРОВ` по кнопке **«Открыть Воскресный дайджест»** (`POST /api/open-tool` с `{"tool": "digest"}`).
+HUD читает `~/.local/state/mac-hygiene/digest_latest.md` через кнопку **«Открыть Воскресный дайджест»** на вкладке `06 · ПУЛЬТ КОНТУРОВ`. Если для скрипта задан другой `XDG_STATE_HOME`, открывайте отчёт из этого каталога.
 
 ---
 
@@ -214,6 +213,8 @@ head -n 40 "$HOME/.local/state/mac-hygiene/digest_latest.md"
    - Проверяет запущенные процессы через `pgrep -x` для списка из 9 приложений: `"Google Chrome"`, `"Yandex"`, `"Obsidian"`, `"Orca"`, `"Telegram"`, `"Code"`, `"Discord"`, `"Notion"`, `"Figma"`.
    - Если хотя бы одно из этих приложений активно, выставляет `ELECTRON_SAFE=0` и **пропускает** Step 4 (очистку Electron-кэшей), чтобы не повредить активные SQLite WAL-журналы.
    - Последовательно запускает `organize check && organize run`, интерактивный `kondo -o 30d "$HOME/Projects"`, `brew cleanup --prune=all`, `uv cache prune --ci`, `pip cache purge` (для Anaconda и Homebrew Python при наличии) и `hf cache prune`.
+   - `kondo` показывает кандидатов во всём `~/Projects`. Проверяйте каждый путь перед подтверждением. Для сканирования с автоматическим исключением активных Orca worktrees используйте Радар очистки в HUD.
+   - Правило `organize` для SSD выполняет обычный `move` после проверки монтирования. Для переноса с проверкой SHA-256 используйте «Телепорт медиа» в HUD.
 2. **`clean-gui-caches`** — точечная очистка кэшей GUI-приложений:
    - Работает по принципу **fail-closed**: при обнаружении любого запущенного процесса из 9 целевых приложений выводит список и завершается с кодом `1`.
    - Показывает размер каждого найденного каталога кэша через `du -sh` и требует `[y/N]`.

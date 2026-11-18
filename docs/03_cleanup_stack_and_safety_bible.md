@@ -261,7 +261,7 @@ czkawka_cli dup -d <target> -s hash -t blake3 -m 1048576 -C <json> -e <exclusion
 
 Браузеры (Chrome, Yandex) и Electron-приложения (VS Code, Obsidian, Orca, Discord, Notion, Figma, Telegram, draw.io, Яндекс Музыка) активно используют SQLite в режиме **Write-Ahead Logging** (`*.db` + `*-wal` + `*-shm`), а также движки `LevelDB` и `IndexedDB`. Удаление кэшей или воркеров на работающем приложении приводит к рассинхронизации WAL-фреймов (`SQLITE_CORRUPT`) и повреждению открытых профилей.
 
-В `Mac Nexus` проверка работает в два эшелона: при сборе кандидатов (`_scan_app_caches`) и **непосредственно перед исполнением** в [`_recheck_target_lock`](../src/mac_nexus/executor.py#L248-L295) (при нарушении возвращается `HTTP 409 LIVE LOCK`). Тот же список проверяется через `pgrep -x` в [`clean-approve`](../automation/bin/clean-approve) и [`clean-gui-caches`](../automation/bin/clean-gui-caches).
+В `Mac Nexus` проверка работает при сборе кандидатов (`_scan_app_caches`) и перед исполнением (`_recheck_target_lock`). Если цель уже заблокирована при запросе, сервер возвращает `HTTP 409`. Скрипты `clean-approve` и `clean-gui-caches` проверяют собственный список из девяти процессов через `pgrep -x`. [Проверка в бэкенде](../src/mac_nexus/executor.py#L248-L295) · [Проверки в Stack 1](../automation/README.md#6-регламент-ручного-обслуживания-и-защита-sqlite-wal)
 
 **Полный перечень отслеживаемых процессов [`MONITORED_APPS`](../src/mac_nexus/scanner.py#L170-L182):**
 `Google Chrome`, `Yandex`, `Telegram`, `Obsidian`, `Orca`, `Code`, `Discord`, `Notion`, `Figma`, `draw.io`, `Yandex Music` / `Яндекс Музыка` (дополнительно `pgrep -fi rider` блокирует очистку кэшей `NuGet`).

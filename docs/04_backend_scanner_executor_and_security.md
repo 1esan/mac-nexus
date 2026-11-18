@@ -165,7 +165,7 @@ if host != "127.0.0.1":
 
 ### Уровень 3 · Allowlist серверных Snapshot ID
 
-Ни один мутирующий или reveal-эндпоинт (`/api/execute`, `/api/offload`, `/api/smart-close-clean`, `/api/radar-action`, `/api/radar-reveal`, `/api/empty-trash`, `/api/trash-duplicates`) не принимает файловые пути или команды shell от клиента. HTTP-клиент передаёт только серверные строковые ID (`item_ids`, `item_id`, `media_ids`, `radar_ids`, `radar_id`, `trash_ids`, `file_ids`). Любой неизвестный или устаревший ID (равно как попытки передать `"/etc/passwd; rm -rf /"` или `"../../secret"`) вызывает `UnknownTargetError` и немедленный ответ `HTTP 400`. Для поиска дубликатов `target` ограничен словарём из четырёх ключей (`downloads`, `desktop`, `documents`, `ssd_media`), а для `/api/open-tool` `tool` ограничен шестью значениями (`digest`, `pearcleaner`, `daisydisk`, `finder_ssd`, `finder_downloads`, `finder_trash`).
+Маршруты, которым нужна конкретная цель, принимают выданные сервером строковые ID (`item_ids`, `item_id`, `media_ids`, `radar_ids`, `radar_id`, `trash_ids`, `file_ids`). Если ID отсутствует в соответствующем реестре, сервер возвращает `HTTP 400`. ID привязаны к процессу сервера, а повторное сканирование может сохранять ранее выданные ID, поскольку большинство реестров дополняются. Для поиска дубликатов `target` ограничен четырьмя значениями (`downloads`, `desktop`, `documents`, `ssd_media`), а для `/api/open-tool` `tool` ограничен шестью значениями (`digest`, `pearcleaner`, `daisydisk`, `finder_ssd`, `finder_downloads`, `finder_trash`).
 
 ### Уровень 4 · Инварианты `is_protected_path` и отказ от симлинков
 
@@ -370,7 +370,7 @@ flowchart LR
 
 ### Атомарный SHA-256 телепорт на SSD (`teleport_file_sha256`)
 
-Функция `teleport_file_sha256` ([`executor.py:183-245`](../src/mac_nexus/executor.py#L183-L245)) гарантирует отсутствие потери данных даже при обрыве питания или отключении кабеля SSD:
+Функция `teleport_file_sha256` удаляет исходник только после записи staging-файла, проверки размера и SHA-256, переименования и проверки итогового файла на SSD. [Порядок операций в `executor.py`](../src/mac_nexus/executor.py#L183-L245)
 
 ```mermaid
 sequenceDiagram

@@ -319,14 +319,14 @@ sequenceDiagram
     "dry_run": true
   }
   ```
-  Поле `dry_run` опционально и по умолчанию равно `true` (`bool(body.get("dry_run", True))`).
+  При пропуске поля `dry_run` сервер выполняет симуляцию. Передавайте JSON `true` или `false`. Этот маршрут приводит полученное значение к `bool`.
 - **Валидация до старта потока:**
   1. `item_ids` должен быть непустым списком строк (`list[str]`).
   2. Каждый ID должен существовать в `ScanSnapshot.items_by_id` (иначе `400`).
   3. Выполняется свежий вызов `detect_live_locks(env)` и `_recheck_target_lock` для каждой цели (иначе `409`).
 - **Ответы:**
   - `200 OK`: `{"ok": true, "job_id": "exec_1a2b3c4d5e"}`
-  - `400 Bad Request`: некорректный JSON, `item_ids` не `list[str]`, пустой список `item_ids`, неизвестный/устаревший ID.
+  - `400 Bad Request`: некорректный JSON, `item_ids` не `list[str]`, пустой список `item_ids` или ID отсутствует в `items_by_id`.
   - `403 Forbidden`: отсутствует `X-Mac-Nexus-Client: 1` или невалидный `Origin`.
   - `409 Conflict`: `{"ok": false, "error": "LIVE LOCK: <причина блокировки>"}` (обратите внимание: префикс `"LIVE LOCK: "` добавляется именно обработчиком `/api/execute` в [`server.py:305`](../src/mac_nexus/server.py#L305)).
   - `413 Request Entity Too Large`: тело больше 1 MiB.
@@ -344,7 +344,7 @@ sequenceDiagram
     "dry_run": true
   }
   ```
-  Поле `dry_run` по умолчанию равно `true`.
+  При пропуске поля `dry_run` сервер выполняет симуляцию. Передавайте JSON `true` или `false`. Этот маршрут приводит полученное значение к `bool`.
 - **Валидация до старта потока:**
   1. `media_ids` должен быть непустым `list[str]`.
   2. Каждый ID должен присутствовать в `ScanSnapshot.offload_by_id` (иначе `400`).
@@ -408,7 +408,7 @@ sequenceDiagram
     "total_wasted_bytes": 4194304
   }
   ```
-- **Инвариант сортировки:** внутри каждой группы `files[0]` — самый старый файл (`is_primary = true`, «ОРИГИНАЛ / СОХРАНИТЬ»), а `files[1..]` — более новые копии. Если целевая папка не существует (для `downloads` или `desktop`), возвращается `200 OK` с `"groups": []` и `"total_wasted_bytes": 0`.
+- **Порядок файлов:** первым идёт файл с самой ранней датой изменения. При равной дате порядок определяют длина пути и сам путь. HUD помечает `files[0]` как «ОРИГИНАЛ / СОХРАНИТЬ» по его позиции в массиве. Если целевая папка отсутствует, возвращается `200 OK` с `"groups": []` и `"total_wasted_bytes": 0`. Для `ssd_media` сервер сначала проверяет монтирование SSD.
 - **Ошибки:** `400` (недопустимый `target` или не строка), `403` (CSRF), `409` (`RuntimeError`: отмонтированный SSD для `ssd_media` или ошибка `czkawka_cli`), `413`.
 
 ---
@@ -424,6 +424,7 @@ sequenceDiagram
   }
   ```
 - **Поведение:** выполняется под `snapshot_lock`; для каждого ID проверяется наличие в `dup_files_by_id` (`UnknownTargetError` → `400`) и отсутствие в `is_protected_path` (`LiveLockError` → `409`). Успешно перемещённые ID удаляются из `dup_files_by_id`.
+- **Сохранение оригинала:** HUD блокирует выбор первого файла группы. При прямой работе с API клиент отвечает за исключение `files[0]` при выборе копий.
 - **Ответ `200 OK`:**
   ```json
   {
@@ -528,11 +529,11 @@ sequenceDiagram
   {
     "ok": true,
     "tcc_restricted": false,
-    "total_bytes": 524288000,
+    "total_bytes": 209715200,
     "older_7d_bytes": 209715200,
     "older_30d_bytes": 0,
-    "item_count": 2,
-    "finder_item_count": 2,
+    "item_count": 1,
+    "finder_item_count": 1,
     "items": [
       {
         "id": "trash_11223344556677",
@@ -559,7 +560,7 @@ sequenceDiagram
     "items": []
   }
   ```
-  В этом режиме количество элементов запрашивается через `osascript` (`Finder`), а очистка доступна через `POST /api/empty-trash` с `"mode": "finder_empty"` или `POST /api/open-tool` с `"tool": "finder_trash"`.
+  В этом режиме сервер запрашивает у Finder количество элементов. `POST /api/open-tool` с `"tool": "finder_trash"` открывает Корзину в Finder. `POST /api/empty-trash` с `"mode": "finder_empty"` запрашивает её очистку.
 
 ---
 
@@ -580,8 +581,8 @@ sequenceDiagram
   ```
   Поля `reopen` и `dry_run` опциональны (`bool`, по умолчанию `true`).
 - **Ответы:**
-  - `200 OK`: `{"ok": true, "job_id": "smart_a1b2c3d4e5"}` (асинхронно транслирует прогресс в SSE; если при `dry_run: false` процесс не завершился за `10` секунд или запустился повторно, воркер прерывается с SSE-сообщением `[LOCK-GUARD] Таймаут закрытия ...` без касания кэша).
-  - `400 Bad Request`: `item_id` не непустая строка, `reopen`/`dry_run` не boolean, либо неизвестный/устаревший `item_id`.
+  - `200 OK`: `{"ok": true, "job_id": "smart_a1b2c3d4e5"}`. При таймауте ожидания или обнаружении повторного запуска worker прекращает операцию до очистки кэша и сообщает причину через SSE (`[LOCK-GUARD]`).
+  - `400 Bad Request`: `item_id` пустой, имеет неверный тип или отсутствует в `items_by_id`, либо `reopen` или `dry_run` имеют тип, отличный от `bool`.
   - `403 Forbidden`: сбой CSRF / `Origin`.
   - `409 Conflict`: **HARD prohibition** для `orca`/`vscode`, не-`app_cache` категория, `not quittable` или недопустимое имя приложения.
   - `413 Request Entity Too Large`: тело больше 1 MiB.
@@ -640,10 +641,11 @@ sequenceDiagram
     "dry_run": true
   }
   ```
+- **Поле `dry_run`** принимает `bool` и по умолчанию равно `true`.
 - **Поле `mode` (`str`):**
   - `"selected"` — удалить только указанные `trash_ids` (непустой `list[str]` обязателен).
   - `"older_than"` — удалить элементы `trash_by_id` с `age_days >= older_days` (`older_days >= 0`, по умолчанию `30`).
-  - `"finder_empty"` — вызвать `osascript -e 'tell application "Finder" to empty trash'` (обходит TCC, работает даже при `tcc_restricted: true`).
+  - `"finder_empty"` — попросить Finder очистить всю Корзину через `osascript`. Режим доступен при `tcc_restricted: true`, если macOS разрешает управление Finder.
 - **Ответ `200 OK`:**
   - Режимы `"selected"` и `"older_than"`:
     ```json
@@ -675,7 +677,7 @@ sequenceDiagram
 | `400` | `BAD_REQUEST` | `_read_json_body`, `POST /api/*` | Неверный `Content-Length`, битый JSON, не-объект JSON, неверный тип поля, пустой список ID, `UnknownTargetError`, `ValueError` |
 | `403` | `FORBIDDEN` | `_send_static_file`, `_check_post_csrf` | Отсутствует `X-Mac-Nexus-Client: 1`, поддельный `Origin`, path traversal в `/static/*`, неподдерживаемое расширение файла |
 | `404` | `NOT_FOUND` | `_send_static_file`, `do_GET`, `do_POST` | Отсутствующий статический файл, неизвестный маршрут |
-| `409` | `CONFLICT` | `/api/execute`, `/api/offload`, `/api/smart-close-clean`, `/api/radar-action`, `/api/radar-reveal`, `/api/empty-trash`, `/api/duplicates`, `/api/trash-duplicates`, `/api/open-tool` | Активный `LIVE LOCK`, Smart Close HARD-запрет (`orca`/`vscode`), защищённый путь (`_verify_inside_trash`, `is_protected_path`), отмонтированный внешний SSD, X-Ray `hotspot`-узел или сбой `czkawka_cli` |
+| `409` | `CONFLICT` | `/api/execute`, `/api/offload`, `/api/smart-close-clean`, `/api/radar-action`, `/api/empty-trash`, `/api/duplicates`, `/api/trash-duplicates`, `/api/open-tool` | Активный `LIVE LOCK`, Smart Close HARD-запрет (`orca`/`vscode`), защищённый путь (`_verify_inside_trash`, `is_protected_path`), отмонтированный внешний SSD, X-Ray `hotspot`-узел или сбой `czkawka_cli` |
 | `413` | `REQUEST_ENTITY_TOO_LARGE` | `_read_json_body` | `Content-Length < 0` или `> 1048576` байт (1 MiB) |
 | `500` | `INTERNAL_SERVER_ERROR` | `/api/radar-reveal`, `/api/empty-trash`, `/api/open-tool` | Ошибка запуска `open` / `open -R` или AppleScript `Finder empty trash` (`RuntimeError`) |
 
