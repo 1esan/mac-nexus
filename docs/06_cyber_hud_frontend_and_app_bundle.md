@@ -116,7 +116,7 @@
 
 ## 3. Внутренняя логика контроллера `app.js`
 
-Весь клиентский код [`app.js`](../src/mac_nexus/static/app.js) (`2760` строк) обёрнут в изолированную IIFE `(() => { 'use strict'; ... })()` с единым объектом состояния `state` (`dryRun: true`, `olderDays: 30`, `activeTab: 'radar'`, `activeCategory: 'all'`, `dupTarget: 'downloads'`, `selectedItemIds`/`selectedMediaIds`/`selectedDupFileIds`, счётчики одометра, состояние терминала, `eventSource`, `modalConfirmFn`).
+Весь клиентский код [`app.js`](../src/mac_nexus/static/app.js) (`2760` строк) обёрнут в изолированную IIFE `(() => { 'use strict'; ... })()` с единым объектом состояния `state` (`dryRun: true`, `olderDays: 30`, `activeTab: 'radar'`, `activeCategory: 'all'`, `dupTarget: 'downloads'`, `deepMinMb: 50`, `deepView: 'all'`, данные `telemetry` / `scanData` / `deepRadarData` / `dupData` / `trashData`, наборы выбранных ID `selectedItemIds` / `selectedDeepIds` / `selectedMediaIds` / `selectedDupFileIds` / `selectedTrashIds`, счётчики одометра, состояние терминала, `eventSource`, `modalConfirmFn`).
 
 ### 3.1. Поток данных UI, CSRF и SSE
 
@@ -141,15 +141,15 @@ flowchart TD
 
 ### 3.2. HTTP-клиент, фоновый `<canvas>` и SVG-реакторы
 
-1. **HTTP-клиент (`apiGet` / `apiPost`, строки `166–205`):**
+1. **HTTP-клиент (`apiGet` / `apiPost`, строки `190–232`):**
    - `apiGet(url)` выполняет `fetch` с `cache: 'no-store'` и `Accept: application/json`, парсит JSON и кидает `Error` при `!res.ok`.
-   - `apiPost(url, payload)` на **каждый** запрос добавляет заголовок `'X-Mac-Nexus-Client': '1'` и `'Content-Type': 'application/json'`, что требуется CSRF-проверкой в [`server.py`](../src/mac_nexus/server.py#L125-L142). При `!res.ok || data.ok === false` ошибка передаётся в `showToast(..., 'error')` и терминал.
-2. **60fps `<canvas>` орбитальный фон (`initOrbitalCanvas`, строки `225–388`):**
+   - `apiPost(url, payload)` на **каждый** запрос добавляет заголовок `'X-Mac-Nexus-Client': '1'` и `'Content-Type': 'application/json'`, что требуется CSRF-проверкой в [`server.py`](../src/mac_nexus/server.py#L141-L158). При `!res.ok || data.ok === false` ошибка передаётся в `showToast(..., 'error')` и терминал.
+2. **60fps `<canvas>` орбитальный фон (`initOrbitalCanvas`, строки `249–415`):**
    - Учитывает плотность пикселей `dpr = Math.min(window.devicePixelRatio || 1, 2)` и пересчитывается при `resize`.
    - Геометрия сцены: центр `(width * 0.52, height * 0.36)`, радиус `maxR = Math.hypot(width, height) * 0.58`, `6` концентрических орбит (нечётные с анимированным пунктиром), `3` вращающиеся дуги-сканеры, `12` радиальных секторных лучей, `PARTICLE_COUNT = 64` частиц с эллиптической орбитой (`0.78` по Y) и соединяющими филаментами при дистанции `< 115 px` (`linkDist = 115`).
    - В `drawFrame` анимация ставится на паузу при `document.hidden === true`, ограничивает `dt` в диапазоне `[0.001, 0.05]`, плавно интерполирует `currentSpeed` (`1.0` в простое, `2.6` при сканировании, `3.5` при телепорте) и цветовой канал из cyan `(0, 240, 255)` в violet `(139, 92, 246)` во время `state.isTransferring`.
    - При `prefers-reduced-motion: reduce` рисует ровно один статичный кадр без постановки следующего `requestAnimationFrame`.
-3. **SVG-кольца реакторов и одометр (строки `393–623`):**
+3. **SVG-кольца реакторов и одометр (строки `417–660`):**
    - `setArcProgress(circleEl, radius, percent)` вычисляет `circumference = 2 * Math.PI * radius`, `offset = circumference * (1 - clamped / 100)` и обновляет `strokeDasharray` / `strokeDashoffset` для внешнего (`r=68`) и внутреннего (`r=53`) колец (повёрнуты на `-90deg`).
    - Расчёт заполнения внутренних колец: для NVMe — оценка доли Purgeable `Math.max(8, Math.min(100, (purgeable / total) * 100 * 4))`; для SSD — доля существующих полок `01..99` (`existingShelves / shelves.length * 100`); для SecondBrain — индикатор наполненности `Math.min(100, Math.max(20, sbNotes / 5))` (или `60` при `has_node_modules_risk`).
    - `animateOdometerTo(targetBytes, deltaBytes)` плавно изменяет счётчик за `850` мс по кубической функции замедления (`easeOutCubic`: `1 - Math.pow(1 - progress, 3)`), мигает классом `.is-pulsing` и на `4200` мс показывает пилюлю `#odometer-delta`.
@@ -157,46 +157,52 @@ flowchart TD
 
 ### 3.3. Словари UI, безопасность `DRY-RUN` / `LIVE LOCK`, SSE и XSS
 
-1. **Словари локализации и теги (`app.js`, строки `8–39`, `1083–1108`):**
-   - `CATEGORY_LABELS`: `all` («Все»), `ai_dev_deep` («AI/Dev Deep»), `system_cache` («Системные кэши»), `app_orphans` («Осиротевшие»), `app_cache` («Кэши программ»), `pkg_cache` («Пакетные кэши»), `downloads_inbox` («Downloads Inbox»), `dev_projects` («Проекты ~/Projects»), `ghost_dmgs` («Образы DMG»).
+1. **Словари локализации и теги (`app.js`, строки `8–54`, `1429–1455`):**
+   - `CATEGORY_LABELS`: `all` («Все»), `ai_dev_deep` («AI & Dev»), `system_cache` («Система и кэши»), `app_orphans` («Сироты программ»), `app_cache` («Приложения»), `pkg_cache` («Пакеты»), `downloads_inbox` («Downloads»), `dev_projects` («Проекты»), `ghost_dmgs` («DMG»).
    - `RISK_META`: `low` (`Низкий риск`), `safe` (`Безопасно`), `medium` (`Умеренный`), `high` (`Внимание`).
-   - `ACTION_LABELS`: `trash` (`В Корзину`), `prune`/`clean_cache` (`Очистка кэша`), `detach_dmg`/`detach` (`Отмонтировать DMG`), `organize` (`Organize`), `rm_artifact` (`Удаление артефакта`).
+   - `ACTION_LABELS`: `trash` (`В Корзину`), `prune`/`clean_cache` (`Очистка кэша`), `detach_dmg`/`detach` (`Отмонтировать DMG`), `organize` (`Organize`), `rm_artifact` (`Удаление артефакта`), `docker_prune` (`Docker Prune`).
    - Теги SSE-журнала (`classifyTagStyle`): `[SCAN]` (`.log-tag--scan`), `[LOCK*]` (`.log-tag--lock`), `[SHA*]`/`[TELEPORT*]` (`.log-tag--sha`), `[DRY*]` (`.log-tag--dry`), `[DONE*]` (`.log-tag--done`), `[ERR*]`/`[FAIL*]`/`[WARN*]` (`.log-tag--err`).
 2. **Переключатель `DRY-RUN`, `LIVE LOCK` и модальное подтверждение:**
    - По умолчанию `state.dryRun = true`. `syncDryRunUI()` синхронизирует `aria-checked`, классы пилюли (`dry-run-pill--safe` / `--live`) и текст кнопок (`ОЧИСТИТЬ ВЫБРАННОЕ (DRY-RUN)` vs `ОЧИСТИТЬ ВЫБРАННОЕ`).
-   - `requestConfirmIfNeeded(opts, actionFn)` пропускает подтверждение при `state.dryRun === true`, **кроме** удаления дубликатов (`alwaysConfirm: true` на `#btn-trash-duplicates`).
-   - В [`renderRadarItems`](../src/mac_nexus/static/app.js#L684-L725) элементы с `item.locked === true` получают `.is-locked`, бейдж `LIVE LOCK`, пояснение `.lock-reason-box` и заблокированный чекбокс (`disabled aria-disabled="true"`). Кнопка `#btn-select-all-ready` выделяет только незаблокированные цели текущей категории.
-   - В [`updateActionButtonsState`](../src/mac_nexus/static/app.js#L1053-L1078) кнопка `#btn-execute-offload` отключается при `!ssdMounted && !state.dryRun`.
-   - В [`scanDuplicates`](../src/mac_nexus/static/app.js#L1563-L1572) первый файл каждой группы (`idx === 0`) помечается как `ОРИГИНАЛ / СОХРАНИТЬ` с `disabled`-чекбоксом, а автовыбор проставляется только на копии (`i >= 1`).
+   - `requestConfirmIfNeeded(opts, actionFn)` пропускает подтверждение при `state.dryRun === true`, **кроме** удаления дубликатов (`alwaysConfirm: true` на `#btn-trash-duplicates`) и `#btn-trash-finder-empty`.
+   - В [`renderRadarItems`](../src/mac_nexus/static/app.js#L688-L769) элементы с `item.locked === true` получают `.is-locked`, бейдж `LIVE LOCK`, пояснение `.lock-reason-box`, заблокированный чекбокс (`disabled aria-disabled="true"`) и кнопку `.js-smart-close-btn` при `item.quittable === true` (для `orca` и `vscode` кнопка недоступна). Кнопка `#btn-select-all-ready` выделяет только незаблокированные цели текущей категории.
+   - В [`updateActionButtonsState`](../src/mac_nexus/static/app.js#L1351-L1427) кнопка `#btn-execute-offload` отключается при `!ssdMounted && !state.dryRun`.
+   - В [`renderDuplicates`](../src/mac_nexus/static/app.js#L1013-L1088) и [`scanDuplicates`](../src/mac_nexus/static/app.js#L1890-L1935) первый файл каждой группы (`idx === 0`) помечается как `ОРИГИНАЛ / СОХРАНИТЬ` с `disabled`-чекбоксом, а автовыбор проставляется только на копии (`i >= 1`).
 3. **`EventSource` SSE-терминал, авто-реконнект и фоновые таймеры:**
    - `initSSE()` открывает `new EventSource('/api/events')`. При обрыве соединения встроенный механизм `EventSource` браузера выполняет автоматический реконнект, а `es.onerror` переводит интерфейс в `SSE: ПЕРЕПОДКЛЮЧЕНИЕ` (`status-pill--pending`) и бейдж `RECONNECT`.
    - `appendTerminalLog()` хранит максимум `350` строк в `#terminal-log`; события `reclaimed` обновляют одометр в реальном времени, а `done` разблокирует UI и вызывает `refreshTelemetry()` + тихий `runScan({ silent: true })`.
-   - На случай потери `done` заданы страховочные таймеры (`20000` мс для `/api/execute`, `30000` мс для `/api/offload`), а при видимой вкладке и отсутствии задач раз в `15000` мс выполняется `refreshTelemetry()`.
+   - На случай потери `done` заданы страховочные таймеры (`20000` мс для `/api/execute` и `radar-action`, `30000` мс для `/api/offload`), а при видимой вкладке и отсутствии задач раз в `15000` мс выполняется `refreshTelemetry()`.
 4. **Защита от XSS (`escapeHtml`, `textContent`, `buildSafeMarkdownDom`):**
-   - Динамические имена файлов, пути, причины блокировки и заголовки внутри HTML-шаблонов карточек экранируются функцией [`escapeHtml`](../src/mac_nexus/static/app.js#L78-L86) (`&`, `<`, `>`, `"`, `'`).
+   - Динамические имена файлов, пути, причины блокировки и заголовки внутри HTML-шаблонов карточек экранируются функцией [`escapeHtml`](../src/mac_nexus/static/app.js#L102-L110) (`&`, `<`, `>`, `"`, `'`).
    - Строки терминала, тосты (`showToast`) и тексты подтверждений вставляются через `textContent`.
-   - Markdown дайджеста `digest_latest.md` в Holo Modal преобразуется безопасным построчным DOM-парсером [`buildSafeMarkdownDom`](../src/mac_nexus/static/app.js#L1276-L1338) (`#`, `##`, `###`, списки, ```` ``` ````-блоки) исключительно через `document.createElement` + `textContent`.
+   - Markdown дайджеста `digest_latest.md` в Holo Modal преобразуется безопасным построчным DOM-парсером [`buildSafeMarkdownDom`](../src/mac_nexus/static/app.js#L1624-L1686) (`#`, `##`, `###`, списки, ```` ``` ````-блоки) исключительно через `document.createElement` + `textContent`.
 
-### 3.4. Карта событий пользователя (`bindEvents`, строки `1665–1888`)
+### 3.4. Карта событий пользователя (`bindEvents`, строки `2315–2731`)
 
 | Элемент / Событие | Действие контроллера | Сетевой запрос / Побочный эффект |
 | :--- | :--- | :--- |
 | `.tab-btn` (`click`) | `switchTab(btn.dataset.tab)` | Переключение активной вкладки и `aria-selected` |
 | `#dry-run-toggle` (`click`) | Инверсия `state.dryRun`, `syncDryRunUI()`, `updateActionButtonsState()` | Запись предупреждения `[DRY-RUN]` / `[LOCK-GUARD]` в терминал |
-| `#btn-refresh-all` (`click`) | `checkHealth()`, `refreshTelemetry()`, `runScan()` | Полное обновление статуса, реакторов и списка целей |
+| `#btn-refresh-all` (`click`) | `checkHealth()`, `refreshTelemetry()`, `runScan()`, `loadDeepRadar({silent: true})`, `loadTrash({silent: true})` | Полное обновление статуса, реакторов, целей, Deep Radar и Корзины |
 | `#radar-category-chips` (`click`) | Делегирование на `.filter-chip[data-cat]` | Перерисовка `#radar-items-list` без повторного запроса к серверу |
-| `.age-btn` (`click`) | Обновление `state.olderDays` (`14` / `30` / `60`) | Повторный `GET /api/scan?older_days=<days>` |
+| `.age-btn[data-days]` (`click`) | Обновление `state.olderDays` (`14` / `30` / `60`) | Повторный `GET /api/scan?older_days=<days>` |
 | `#btn-select-all-ready` / `#btn-clear-radar-selection` | Массовое добавление незаблокированных `item.id` в `selectedItemIds` или очистка `Set` | Обновление счётчиков в `.action-dock` |
-| `#radar-items-list`, `#teleport-list`, `#duplicates-list` (`change`) | Делегирование чекбоксов `.js-radar-check`, `.js-media-check`, `.js-dup-check` | Синхронизация соответствующего `Set` и класса `.is-selected` |
+| `#radar-items-list` (`.js-smart-close-btn` `click`) | `openSmartCloseModal(item)` → `executeSmartCloseClean()` | `POST /api/smart-close-clean` (`quittable` приложения) |
+| `#deep-min-mb-group .deep-min-btn` / `#btn-scan-deepradar` | Обновление `state.deepMinMb` (`50`/`250`/`1024`) → `loadDeepRadar()` | `GET /api/deep-radar?min_mb=<mb>` |
+| `#deep-filter-chips`, `#btn-select-all-deep`, `#btn-clear-deep-selection` | Переключение вида (`all`/`movable`/`hotspot`), массовый выбор/сброс `selectedDeepIds` | Перерисовка `#deep-radar-list` |
+| `#btn-radar-trash` / `#btn-radar-teleport` (`#radar-shelf-select`) | `requestConfirmIfNeeded()` → `executeRadarAction('trash' \| 'teleport_ssd')` | `POST /api/radar-action` (`X-Mac-Nexus-Client: 1`) |
+| `#deep-radar-list` (`.js-radar-reveal-btn` `click`) | `revealRadarItem(id)` | `POST /api/radar-reveal` (показ в Finder) |
+| `#radar-items-list`, `#deep-radar-list`, `#teleport-list`, `#duplicates-list`, `#trash-items-list` (`change`) | Делегирование чекбоксов `.js-radar-check`, `.js-deep-check`, `.js-media-check`, `.js-dup-check`, `.js-trash-check` | Синхронизация соответствующего `Set` и класса `.is-selected` |
 | `#btn-execute-clean` / `#btn-execute-offload` | `requestConfirmIfNeeded()` → `executeSelectedCleanup()` / `executeSelectedOffload()` | `POST /api/execute` или `POST /api/offload` (`X-Mac-Nexus-Client: 1`) |
-| `#btn-scan-duplicates` / `#btn-trash-duplicates` | `scanDuplicates()` / `requestConfirmIfNeeded({alwaysConfirm: true})` → `trashSelectedDuplicates()` | `POST /api/duplicates` или `POST /api/trash-duplicates` |
-| `.tool-btn[data-tool]` (`click`) | `openTool(tool)` (`pearcleaner`, `daisydisk`, `finder_ssd`, `finder_downloads`, `digest`) | `POST /api/open-tool` → запуск приложения/Finder или открытие Holo Modal |
+| `#dup-target-group`, `#btn-scan-duplicates` / `#btn-trash-duplicates` | Выбор контура (`downloads`/`desktop`/`documents`/`ssd_media`), `scanDuplicates()` / `trashSelectedDuplicates()` | `POST /api/duplicates` или `POST /api/trash-duplicates` |
+| `#btn-refresh-trash`, `#btn-select-trash-7d`, `#btn-purge-trash-30d`/`7d`/`selected`, `#btn-trash-open-finder`, `#btn-trash-finder-empty` | `loadTrash()`, `executeEmptyTrash({mode})`, `openTool('finder_trash')` | `GET /api/trash`, `POST /api/empty-trash` (`selected`/`older_than`/`finder_empty`), `POST /api/open-tool` |
+| `.tool-btn[data-tool]` (`click`) | `openTool(tool)` (`pearcleaner`, `daisydisk`, `finder_ssd`, `finder_downloads`, `finder_trash`, `digest`) | `POST /api/open-tool` → запуск приложения/Finder или открытие Holo Modal |
 | `#btn-toggle-terminal`, `#btn-terminal-autoscroll`, `#btn-terminal-clear` | Сворачивание drawer, тумблер автопрокрутки, сброс `#terminal-log` | Обновление `aria-expanded` / `aria-pressed` и `#terminal-count` |
 | `#holo-modal-copy`, `#holo-modal-close`, `Escape` | Копирование `state.modalCopyText` через `navigator.clipboard.writeText` или закрытие модалки | Тост подтверждения копирования или сброс `modalConfirmFn` |
 
 ### 3.5. Holo Modal и безопасный парсер дайджеста (`buildSafeMarkdownDom`)
 
-Модальное окно `#holo-modal` (`openHoloModal` / `closeHoloModal`, строки `1245–1370`) работает в двух режимах:
+Модальное окно `#holo-modal` (`openHoloModal` / `closeHoloModal`, строки `1593–1623`) работает в двух режимах:
 
 1. **Режим чтения отчётов (`confirmMode: false`):** используется при нажатии на кнопку `Открыть Воскресный дайджест` (`POST /api/open-tool` с `{"tool": "digest"}`). Показывает кнопку `#holo-modal-copy` для копирования исходного Markdown в буфер обмена и скрывает `#holo-modal-footer`.
 2. **Режим подтверждения боевых операций (`confirmMode: true`):** вызывается из `requestConfirmIfNeeded()`, когда `DRY-RUN` выключен или передан флаг `alwaysConfirm: true` (удаление дубликатов). Формирует контейнер `.confirm-box` с красной плашкой `.confirm-warning`, деталями выбранного объёма и кнопками `#holo-modal-cancel` / `#holo-modal-confirm`.
@@ -295,7 +301,7 @@ tail -n 50 "$HOME/.local/state/mac-nexus/server.log"
 
 ### 5.1. Частые вопросы по `.app` бандлу и фронтенду
 
-- **Почему в браузере видны старые стили или скрипт?** Сервер отдаёт `/static/*` с заголовком `Cache-Control: no-store` ([`server.py`](../src/mac_nexus/server.py#L120)), а также используйте принудительное обновление вкладки (`Cmd+Shift+R`), если меняли статику во время работы сервера.
+- **Почему в браузере видны старые стили или скрипт?** Сервер отдаёт `/static/*` с заголовком `Cache-Control: no-store` ([`server.py`](../src/mac_nexus/server.py#L136)), а также используйте принудительное обновление вкладки (`Cmd+Shift+R`), если меняли статику во время работы сервера.
 - **Сервер не стартует по двойному клику на `Mac Nexus.app`:** проверьте права на выполнение бинарника (`chmod +x "/Users/egorlabutin/Desktop/Mac Nexus.app/Contents/MacOS/MacNexus"`), наличие одного из четырёх интерпретаторов Python 3 из списка поиска и ошибки в `~/.local/state/mac-nexus/server.log`.
 - **Изменение `AppIcon.icns` не сразу отображается в Finder/Spotlight:** обновите кеш иконки самого бандла командой `touch "/Users/egorlabutin/Desktop/Mac Nexus.app"`.
 

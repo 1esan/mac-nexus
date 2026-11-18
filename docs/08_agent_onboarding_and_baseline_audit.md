@@ -33,20 +33,22 @@
 | `ssd_mount_checker: Callable[[Path], bool] \| None` | Проверка `os.path.ismount(ssd_mount)` | Лямбда `lambda _p: bool(state["ssd_mounted"])` для симуляции отключения SSD |
 | `cmd_runner: Callable[..., CompletedProcess[str]] \| None` | Вызов `subprocess.run` в `_run_cmd()` | Функция `fake_cmd(args, ...)` с записью в `state["commands_called"]` |
 | `now_fn: Callable[[], float]` | Текущее время (для расчёта `age_days`) | Детерминированный таймер `lambda: float(state["now"])` |
-| `applications_dirs: list[Path]` | Каталоги приложений для `_scan_app_orphans` | `[tmp_path / "Applications"]` |
-| `temp_dir: Path` | Системный temp для `_scan_system_caches` | `tmp_path / "tmp"` |
-| `users_dir: Path` | Корень Users для `_scan_ai_dev_deep` | `tmp_path / "Users"` |
-| `docker_bin: Path` | CLI Docker для ai_dev_deep | `tmp_path / "bin/docker"` (несуществующий) |
-| `go_bin: Path` | CLI Go для go pkg_cache | `tmp_path / "bin/go"` (несуществующий) |
+| `applications_dirs: tuple[Path, ...]` | `("/Applications", "/System/Applications", "~/Applications")` для `_scan_app_orphans` | `(tmp_path / "Applications",)` |
+| `temp_dir: Path \| None = None` | Системный temp (через `_temp_dir(env)` → `tempfile.gettempdir()`) для `_scan_system_caches` | `tmp_path / "tmp"` |
+| `users_dir: Path \| None = None` | Корень профилей (через `_users_dir(env)` → `/Users`) для `scan_deep_radar` | `tmp_path / "Users"` |
+| `docker_bin: Path` | CLI Docker (`~/.local/bin/docker`) для `_scan_ai_dev_deep` | `tmp_path / "bin/docker"` (отключает реальный Docker) |
+| `go_bin: Path` | CLI Go (`/opt/homebrew/bin/go`) для `go` в `_scan_pkg_caches` | `tmp_path / "bin/go"` (отключает реальный Go) |
 
 Кроме того, фикстура `live_server` поднимает реальный `NexusHTTPServer` через `create_server(host="127.0.0.1", port=0, env=env, static_dir=static_dir)` на эфемерном порту в daemon-потоке. Это позволяет проверять реальный HTTP/1.1 стек, CSRF-заголовки, `409 LIVE LOCK`, traversal в `/static/*` и поток `GET /api/events` (SSE) без какого-либо влияния на запущенный экземпляр на `:8790`.
 
 #### Контракты целевых дескрипторов в `scanner.py`
-Агенту, добавляющему логику сканирования или исполнения, важно точно соблюдать поля четырёх dataclasses:
+Агенту, добавляющему логику сканирования или исполнения, важно точно соблюдать поля пяти целевых dataclasses и контейнера `ScanSnapshot`:
 - **`ScanTarget`:** `item_id` (`_stable_id`), `category`, `title`, `action_kind`, `paths: list[Path]`, `tool_name`, `app_key`, `app_label`, `project_path`, `dmg_device`, `dmg_mount_points`, `estimated_bytes`, `locked`, `lock_reason`, `quittable`, `quit_app_name`, `quit_bundle_id`, `browser_warning`.
 - **`OffloadTarget`:** `media_id`, `name`, `source_path`, `rel_path`, `ext`, `size_bytes`, `mtime_ts`, `dest_dir`.
 - **`DuplicateFileTarget`:** `file_id`, `name`, `path`, `size_bytes`, `mtime_ts`, `group_id`, `is_primary`.
-- **`ScanSnapshot`:** `items_by_id`, `offload_by_id`, `dup_files_by_id`, `radar_by_id` (`RadarTarget`), `trash_by_id` (`TrashEntryTarget`) (защищены в `NexusAppContext` мьютексом `snapshot_lock`).
+- **`RadarTarget`:** `radar_id`, `title`, `path`, `rel_path`, `kind` (`"file"|"directory"|"hotspot"`), `size_bytes`, `logical_bytes`, `mtime_ts`, `age_days`, `can_trash`, `can_teleport`, `default_shelf`, `note`.
+- **`TrashEntryTarget`:** `trash_id`, `name`, `path`, `is_dir`, `size_bytes`, `mtime_ts`, `age_days`.
+- **`ScanSnapshot`:** `items_by_id`, `offload_by_id`, `dup_files_by_id`, `radar_by_id`, `trash_by_id` (защищены в `NexusAppContext` мьютексом `snapshot_lock`).
 
 #### Правило вызова внешних команд и шаблон нового теста
 Любую новую команду ОС вызывайте **строго через `_run_cmd(env, args, timeout=...)`** (а проверку SSD — через `ssd_is_mounted(env)`), чтобы `fake_cmd` в `isolated_env` перехватывал её без запуска реальных бинарей:
@@ -83,13 +85,13 @@ def test_new_category_with_di(live_server):
     assert ready_item["locked"] is False
 ```
 
-#### Пятнадцать проверенных доменов покрытия в `tests/test_mac_nexus.py`
+#### Двадцать один автотест покрытия в `tests/test_mac_nexus.py`
 Текущий набор из `21` теста проверяет каждый защитный слой в изоляции:
-- **Транспорт и CSRF:** `test_server_rejects_non_loopback_bind`, `test_csrf_and_origin_enforcement`, `test_static_serving_and_traversal_blocked`.
+- **Транспорт и CSRF:** `test_server_rejects_non_loopback_bind`, `test_csrf_and_origin_enforcement`, `test_v2_csrf_and_origin_enforcement_new_routes`, `test_static_serving_and_traversal_blocked`.
 - **Границы и injection:** `test_protected_paths_never_scanned_or_trashed`, `test_unknown_ids_and_command_injection_rejected`.
 - **Блокировки `LIVE LOCK` и возраст:** `test_live_lock_gui_apps_and_backend_rejection`, `test_live_lock_orca_worktrees_and_live_port_3000`, `test_dev_projects_respects_older_days_query`, `test_ghost_dmg_safety_disk6_vs_disk0`.
 - **Операции с данными и SSE:** `test_offload_sha256_parity_and_unmounted_guard`, `test_duplicates_czkawka_parsing_and_trash_move`, `test_telemetry_and_open_tool_allowlist`, `test_sse_events_endpoint_streams_json`.
-- **v2.0.0 (новые домены):** `test_v2_pkg_cache_go_and_cargo`, `test_v2_system_cache_and_app_orphans`, `test_v2_deep_radar_scan`, `test_v2_trash_scan_tcc`, `test_v2_smart_close_orca_vscode_forbidden`, `test_v2_radar_action_and_reveal`, `test_v2_empty_trash_modes`, `test_v2_duplicates_documents_target`.
+- **v2.0.0 Deep Smart Cleaner:** `test_v2_pkg_cache_go_and_cargo`, `test_v2_system_cache_and_app_orphans`, `test_v2_ai_dev_deep_codex_hermes_and_docker`, `test_v2_smart_close_clean_guards_and_execution`, `test_v2_deep_radar_sparse_hotspot_teleport_and_reveal`, `test_v2_trash_scan_purge_and_tcc_fallback`, `test_v2_duplicates_documents_target`.
 
 ---
 
@@ -265,7 +267,7 @@ flowchart TD
 #### Фаза 4 — Создание и верификация Mac Nexus Cyber-HUD
 * Собраны stdlib-бэкенд ([`src/mac_nexus/`](../src/mac_nexus/server.py)), автономный Cyber-HUD ([`index.html`](../src/mac_nexus/static/index.html), [`styles.css`](../src/mac_nexus/static/styles.css), [`app.js`](../src/mac_nexus/static/app.js)), лаунчеры [`Start_Mac_Nexus.command`](../Start_Mac_Nexus.command) и `/Users/egorlabutin/Desktop/Mac Nexus.app` с Retina-иконкой [`scripts/generate_icon.py`](../scripts/generate_icon.py).
 * Верификация: **`21/21 pytest` PASSED (`4.91s`)**, `node --check` exit `0`, `plutil -lint` OK, `zsh -n` OK, `AppIcon.icns` (`1,196,828` байт, формат `ic12`), `142/142` DOM ID в `app.js` совпадают с `index.html`, `0` внешних CDN URL.
-* Живой сервер `http://127.0.0.1:8790` проверен по всем 16 маршрутам: `/api/telemetry` (`nvme` `89.1%`, `ssd` `21.6%` APFS с `6/6` полок, `secondbrain` `2,113` заметок с `has_node_modules_risk: false`, `orca_live_worktrees: 8`, `ghost_dmgs_count: 0`), `/api/scan?older_days=30` (`21` цель + `24` медиа-кандидата `> 10 MiB`), `403` без CSRF/при плохом `Origin`, `409 LIVE LOCK` на открытом `Telegram`, `200 dry-run` с потоком SSE `/api/events` (без изменения файлов), `digest_latest.md` (`40,167` символов через `/api/open-tool`).
+* Живой сервер `http://127.0.0.1:8790` проверен по всем 17 маршрутам (2 статических + 15 `/api/*`): `/api/telemetry` (`nvme` `89.1%`, `ssd` `21.6%` APFS с `6/6` полок, `secondbrain` `2,113` заметок с `has_node_modules_risk: false`, `orca_live_worktrees: 8`, `ghost_dmgs_count: 0`), `/api/scan?older_days=30` (в базовой `v1.0.0` — `21` цель + `24` медиа-кандидата `> 10 MiB`; после апгрейда `v2.0.0` Deep Smart Cleaner — `56` целей с `3.31 GB` готовых к очистке + `6.38 GB` под `LIVE LOCK` со `Smart Close`, а также `30` целей / `50.92 GB` в `02 · ГЛУБОКИЙ РАДАР`), `403` без CSRF/при плохом `Origin`, `409 LIVE LOCK` на открытом `Telegram` и HARD-запрет `Smart Close` для `Orca`/`VS Code`, `200 dry-run` с потоком SSE `/api/events` (без изменения файлов), `digest_latest.md` (`40,167` символов через `/api/open-tool`).
 
 ---
 
@@ -283,9 +285,9 @@ flowchart TD
 ### 2.4 Оставшиеся цели Tier 2 / Инфраструктурный бэклог (после Фаз 1–4)
 
 Часть крупных резервов намеренно оставлена под интерактивное решение пользователя (через Cyber-HUD или ручной аудит, без слепого автоудаления):
-1. **Вложенные медиафайлы (глубина > 1 под `~/Desktop`):** `24` видеофайла `.mov`/`.mp4` общим объёмом `~2.42 GiB` (`2,594,605,008 B`) автоматически индексируются вкладкой **`02 · ТЕЛЕПОРТ НА SSD`** для SHA-256 выноса в `04_Media_Archive/Screen_Recordings/<YYYY-MM>/`.
-2. **Второй локальный профиль и `Deleted Users` (`~3.75 GiB`):** требуют штатного удаления через Системные настройки macOS.
-3. **Раздутые образы `OrbStack` (`11.695 GiB`) и кэш аккаунта Telegram (`~4.85 GiB`):** сбрасываются при необходимости штатными средствами (`docker system prune`, настройки кэша Telegram).
+1. **Вложенные медиафайлы (глубина > 1 под `~/Desktop`):** `24` видеофайла `.mov`/`.mp4` общим объёмом `~2.42 GiB` (`2,594,605,008 B`) автоматически индексируются вкладкой **`03 · ТЕЛЕПОРТ МЕДИА`** для SHA-256 выноса в `04_Media_Archive/Screen_Recordings/<YYYY-MM>/`.
+2. **Второй локальный профиль и `Deleted Users` (`~3.75 GiB`):** автоматически подсвечиваются как X-Ray точки на вкладке **`02 · ГЛУБОКИЙ РАДАР`** (`can_trash: false`); удаление выполняется штатно через Системные настройки macOS.
+3. **Раздутые образы `OrbStack` (`11.695 GiB`) и кэш аккаунта Telegram (`~4.85 GiB`):** сбрасываются при необходимости штатными средствами (`Docker Prune` во вкладке `01 · РАДАР ОЧИСТКИ` → `AI & Dev` или `docker system prune`, настройки кэша Telegram).
 4. **Кэши открытых браузеров / `code_sign_clone` (`~8.61 GiB` в `/private/var/folders/*/X/`):** сбрасываются после выхода из приложений (`Cmd+Q`) запуском [`clean-gui-caches`](../automation/bin/clean-gui-caches) с последующей перезагрузкой macOS.
 5. **Физический 3-2-1 бэкап:** подключение внешнего диска Time Machine (`500 GB – 1 TB`) и шифрованного облачного `restic` (поскольку на момент аудита `AutoBackup = 0`, подробнее в [01 · Архитектура 3 контуров](01_three_plane_filesystem_architecture.md)).
 

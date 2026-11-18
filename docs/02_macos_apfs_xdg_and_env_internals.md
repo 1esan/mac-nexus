@@ -28,7 +28,7 @@ flowchart TD
 
 1. **Sealed System Volume (SSV, `disk3s1s1`):** корень `/` смонтирован из криптографически подписанного, доступного только на чтение снэпшота APFS (`com.apple.os.update-...`). Изменение системного тома нарушает подпись и блокирует загрузку ОС.
 2. **Firmlinks (`SF_FIRMLINK`) и `/etc/synthetic.conf`:** чтобы системный том `/` и перезаписываемый том `/System/Volumes/Data` (`disk3s5`) выглядели в Finder и терминале как единое POSIX-дерево, ядро macOS сшивает их двунаправленными мостами **firmlinks** (список описан в `/usr/share/firmlinks` — например, `/Users`, `/Applications`, `/Library`). Файл `/etc/synthetic.conf` позволяет объявлять пустые синтетические каталоги или симлинки в корне `/` без нарушения печати SSV.
-3. **Ловушка двойного учёта `/` vs `/System/Volumes/Data`:** если запустить `du` одновременно по `/` без ограничений границ тома, он провалится через firmlinks внутрь `/System/Volumes/Data`, либо при отдельном суммировании `/` + `Data` даст завышенный результат. В `Mac Nexus` (см. [`scanner.py`](../src/mac_nexus/scanner.py#L75)) `ScanEnvironment.nvme_mount` нацелен **строго** на `Path("/System/Volumes/Data")`, а обходы всегда используют `os.scandir()` без следования симлинкам (`follow_symlinks=False`).
+3. **Ловушка двойного учёта `/` vs `/System/Volumes/Data`:** если запустить `du` одновременно по `/` без ограничений границ тома, он провалится через firmlinks внутрь `/System/Volumes/Data`, либо при отдельном суммировании `/` + `Data` даст завышенный результат. В `Mac Nexus` (см. [`scanner.py`](../src/mac_nexus/scanner.py#L192)) `ScanEnvironment.nvme_mount` нацелен **строго** на `Path("/System/Volumes/Data")`, а обходы всегда используют `os.scandir()` без следования симлинкам (`follow_symlinks=False`).
 4. **APFS `Case-insensitive` vs `Case-sensitive` и отказ от ExFAT:**
    - Основной внутренний том и рабочий внешний SSD должны оставаться **`APFS (Case-insensitive)`** — многие macOS-приложения (Adobe Creative Cloud, игры, ряд инсталляторов) ломаются на регистрозависимых томах. Если для сборки Linux-ядра или AOSP всё же потребуется регистрозависимость, в том же APFS-контейнере можно создать отдельный том `APFS (Case-sensitive)` — он будет делить общий пул свободного места без переразметки.
    - **Почему внешний SSD запрещено держать на ExFAT для dev/AI-задач:** ExFAT не имеет журналирования (обрыв USB-C или сон часто ломает FAT до read-only), не поддерживает POSIX-симлинки (ломаются `.venv/bin/python` и `node_modules/.bin/*`), не хранит права `+x`, плодит мусорные `._*` AppleDouble-файлы вместо нативных `xattr`/Finder-тегов, не умеет `clonefile(2)`, снэпшоты и Time Machine. Кроме того, `diskutil` **не поддерживает** конвертацию или безопасное сжатие ExFAT → APFS «на месте» (только полный слив данных → `diskutil eraseDisk APFS ... GPT /dev/diskN` → обратное копирование без `._*`).
@@ -95,10 +95,10 @@ Finder и *Системные настройки → Хранилище* пок�
 
 #### Реализация в `Mac Nexus` (`../src/mac_nexus/scanner.py`)
 
-Для телеметрии Контура 1 [`scanner.py`](../src/mac_nexus/scanner.py#L514-L576) разделяет физическую ёмкость и Purgeable-резерв двумя функциями:
+Для телеметрии Контура 1 [`scanner.py`](../src/mac_nexus/scanner.py#L764-L826) разделяет физическую ёмкость и Purgeable-резерв двумя функциями:
 
-1. **`_disk_stats_from_plist_or_statvfs(env, mount_path)`** ([строки 514–540](../src/mac_nexus/scanner.py#L514-L540)): запускает `diskutil info -plist <mount_path>`, читает `TotalSize` / `APFSContainerSize` и `APFSContainerFree` / `FreeSpace` (при недоступности или ошибке откатывается к `os.statvfs()` через `f_blocks * f_frsize` и `f_bavail * f_frsize`). Таким образом в `planes.nvme.free_bytes` попадает строгое нераспределённое свободное место.
-2. **`_nvme_purgeable_bytes(env)`** ([строки 543–576](../src/mac_nexus/scanner.py#L543-L576)): запрашивает системные `URLResourceValues` через лёгкий JXA-вызов (`osascript -l JavaScript`) с кэшированием на `10` секунд (`_PURGEABLE_CACHE`):
+1. **`_disk_stats_from_plist_or_statvfs(env, mount_path)`** ([строки 764–790](../src/mac_nexus/scanner.py#L764-L790)): запускает `diskutil info -plist <mount_path>`, читает `TotalSize` / `APFSContainerSize` и `APFSContainerFree` / `FreeSpace` (при недоступности или ошибке откатывается к `os.statvfs()` через `f_blocks * f_frsize` и `f_bavail * f_frsize`). Таким образом в `planes.nvme.free_bytes` попадает строгое нераспределённое свободное место.
+2. **`_nvme_purgeable_bytes(env)`** ([строки 793–826](../src/mac_nexus/scanner.py#L793-L826)): запрашивает системные `URLResourceValues` через лёгкий JXA-вызов (`osascript -l JavaScript`) с кэшированием на `10` секунд (`_PURGEABLE_CACHE`):
    ```javascript
    ObjC.import("Foundation");
    var url = $.NSURL.fileURLWithPath("/");
@@ -140,10 +140,10 @@ Finder и *Системные настройки → Хранилище* пок�
 
 ### Как `Mac Nexus` защищён от `SF_DATALESS`
 
-В [`scanner.py`](../src/mac_nexus/scanner.py#L20) объявлена константа `SF_DATALESS_FLAG = 0x40000000`. Обе функции подсчёта размеров используют только метаданные `lstat` без чтения содержимого файлов:
+В [`scanner.py`](../src/mac_nexus/scanner.py#L21) объявлена константа `SF_DATALESS_FLAG = 0x40000000`. Обе функции подсчёта размеров используют только метаданные `lstat` без чтения содержимого файлов:
 
-- **`_dir_size_and_latest_mtime(path)`** ([строки 256–289](../src/mac_nexus/scanner.py#L256-L289)): обходит дерево через `os.scandir()`, проверяет `if entry.is_symlink(): continue`, вызывает `st = entry.stat(follow_symlinks=False)` и при `getattr(st, "st_flags", 0) & SF_DATALESS_FLAG` **полностью пропускает файл**, не прибавляя его `st_size` и не вызывая `fileproviderd`.
-- **`_secondbrain_stats(env)`** ([строки 579–627](../src/mac_nexus/scanner.py#L579-L627)): аналогично учитывает только реальные локальные файлы (`not (getattr(st, "st_flags", 0) & SF_DATALESS_FLAG)`), игнорируя симлинки и `.git`, но отслеживая `.md`-заметки и наличие запрещённого `node_modules`.
+- **`_dir_size_and_latest_mtime(path)`** ([строки 436–469](../src/mac_nexus/scanner.py#L436-L469)): обходит дерево через `os.scandir()`, проверяет `if entry.is_symlink(): continue`, вызывает `st = entry.stat(follow_symlinks=False)` и при `getattr(st, "st_flags", 0) & SF_DATALESS_FLAG` **полностью пропускает файл**, не прибавляя его `st_size` и не вызывая `fileproviderd`.
+- **`_secondbrain_stats(env)`** ([строки 829–877](../src/mac_nexus/scanner.py#L829-L877)): аналогично учитывает только реальные локальные файлы (`not (getattr(st, "st_flags", 0) & SF_DATALESS_FLAG)`), игнорируя симлинки и `.git`, но отслеживая `.md`-заметки и наличие запрещённого `node_modules`.
 
 ### Почему запрещены `.nosync` и `xattr`-костыли для кода в iCloud
 
@@ -241,7 +241,7 @@ sequenceDiagram
 Именно поэтому:
 - в `~/.zshenv` и `mac-setenv-gui` применяется условный guard `[[ -d "/Volumes/secret for mine/..." ]]` + `unsetenv`;
 - в `organize` (Правило #4 в [`config.yaml`](../automation/organize/config.yaml)) используется Python-фильтр `os.path.ismount("/Volumes/secret for mine")`;
-- в `Mac Nexus` ([`scanner.py`](../src/mac_nexus/scanner.py#L195-L199), [`executor.py`](../src/mac_nexus/executor.py#L183-L184)) перед любым медиа-телепортом или показом полок вызывается `ssd_is_mounted()`, проверяющий `env.ssd_mount.exists() and os.path.ismount(str(env.ssd_mount))`.
+- в `Mac Nexus` ([`scanner.py`](../src/mac_nexus/scanner.py#L375-L379), [`executor.py`](../src/mac_nexus/executor.py#L195-L196)) перед любым медиа-телепортом или показом полок вызывается `ssd_is_mounted()`, проверяющий `env.ssd_mount.exists() and os.path.ismount(str(env.ssd_mount))`.
 
 ---
 

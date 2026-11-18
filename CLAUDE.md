@@ -32,7 +32,7 @@ Before modifying any subsystem, start from the canonical documentation rather th
    - Enforce path-traversal checks and `ALLOWED_STATIC_MIME` allowlisting on `/static/*`; enforce `MAX_JSON_BODY_BYTES = 1 MiB` (`HTTP 413`).
 
 2. **Snapshot ID Allowlisting (No Arbitrary Paths or Shell Commands)**
-   - Mutating routes (`/api/execute`, `/api/offload`, `/api/trash-duplicates`) accept ONLY server-generated opaque IDs (`item_ids`, `media_ids`, `file_ids` via `_stable_id`) validated against the active `ScanSnapshot`.
+   - Mutating and reveal routes (`/api/execute`, `/api/offload`, `/api/smart-close-clean`, `/api/radar-action`, `/api/radar-reveal`, `/api/empty-trash`, `/api/trash-duplicates`) accept ONLY server-generated opaque IDs (`item_ids`, `item_id`, `media_ids`, `radar_ids`, `radar_id`, `trash_ids`, `file_ids` via `_stable_id`) validated against the active `ScanSnapshot` (`items_by_id`, `offload_by_id`, `radar_by_id`, `trash_by_id`, `dup_files_by_id`).
    - Never accept arbitrary shell strings or unvalidated filesystem paths from request JSON (`HTTP 400`).
 
 3. **`LIVE LOCK` Runtime Protection**
@@ -67,15 +67,15 @@ Full request/response schemas and `curl` examples: [`docs/05_http_rest_and_sse_a
 - `GET /api/health`
 - `GET /api/telemetry` (includes `"trash"` block: `tcc_restricted`, `total_bytes`, `item_count`)
 - `GET /api/scan?older_days=30` (categories: `system_cache`, `app_orphans`, `ai_dev_deep`, `app_cache`, `pkg_cache`, `downloads_inbox`, `dev_projects`, `ghost_dmgs`)
-- `GET /api/deep-radar?min_mb=50` -> `{ok, items: RadarTarget[]}`)
-- `GET /api/trash` -> `{ok, tcc_restricted, items: TrashEntryTarget[]}`)
+- `GET /api/deep-radar?min_mb=50` -> `{ok, scanned_at, min_mb, summary, items: RadarTarget[]}`
+- `GET /api/trash` -> `{ok, tcc_restricted, total_bytes, older_7d_bytes, older_30d_bytes, item_count, finder_item_count, items: TrashEntryTarget[]}`
 - `GET /api/events` (`text/event-stream`)
 - `POST /api/execute` (`{item_ids, dry_run}` -> `{ok, job_id}`)
 - `POST /api/offload` (`{media_ids, dry_run}` -> `{ok, job_id}`)
 - `POST /api/smart-close-clean` (`{item_id, reopen, dry_run}` -> `{ok, job_id}`; **HARD FORBIDDEN** for `Orca` and `VS Code`)
-- `POST /api/radar-action` (`{radar_ids, action, shelf, dry_run}` -> `{ok, job_id}`; `action`: `"trash"|"teleport_ssd"`)
+- `POST /api/radar-action` (`{radar_ids, action, shelf?, dry_run}` -> `{ok, job_id}`; `action`: `"trash"|"teleport_ssd"`)
 - `POST /api/radar-reveal` (`{radar_id}` -> `{ok}`)
-- `POST /api/empty-trash` (`{mode, trash_ids?, older_days?, dry_run}` -> `{ok, job_id}`; `mode`: `"selected"|"older_than"|"finder_empty"`)
+- `POST /api/empty-trash` (`{mode, trash_ids?, older_days?, dry_run}` -> `{ok, dry_run, purged_count, reclaimed_bytes, message?}`; `mode`: `"selected"|"older_than"|"finder_empty"`)
 - `POST /api/duplicates` (`{target}` -> `{ok, groups, total_wasted_bytes}`; `target` now includes `"documents"`)
 - `POST /api/trash-duplicates` (`{file_ids}` -> `{ok, trashed_count, reclaimed_bytes}`)
 - `POST /api/open-tool` (`{tool}` -> `{ok, content?}`; allowlist includes `"finder_trash"`)

@@ -18,7 +18,7 @@ flowchart TB
 
     subgraph Backend["Mac Nexus Backend (Python 3.12+ Stdlib)"]
         SRV["server.py (NexusHTTPServer + CSRF Guard)"]
-        SCN["scanner.py (Telemetry, LIVE LOCK, 6 Scanners)"]
+        SCN["scanner.py (Telemetry, LIVE LOCK, 9 Scanners + Deep Radar + Trash)"]
         EXC["executor.py (Trash Mover, SHA-256 Teleport, Smart Close, Radar Action, SSE Broker)"]
         HIST["~/.local/state/mac-nexus/history.json"]
     end
@@ -58,7 +58,7 @@ flowchart TB
 
 1. **Контур 1 — Internal NVMe (`Hot Active Workspace`, `/System/Volumes/Data`)**
    - Хранит macOS, `/Applications`, плоские неподвижные репозитории `~/Projects/<slug>` (чтобы не ломать `Orca` и `git worktree`), краткосрочный inbox `~/Downloads` и `UV_CACHE_DIR` (на одном APFS-томе для мгновенного `clonefile(2)`).
-   - Сканер отслеживает пакетные кэши (`brew`, `pip`, `uv`, `npm`, `nuget`, `conda`), безопасные кэши GUI/Electron-приложений, протухшие установщики и скриншоты в `~/Downloads`, устаревшие артефакты сборки в `~/Projects/*` (`node_modules`, `.venv`, `venv`, `.pytest_cache`, `__pycache__`, `target`) и примонтированные «призрачные» `.dmg` (`disk >= 6`).
+   - Сканер отслеживает пакетные кэши (`brew`, `pip`, `uv`, `npm`, `nuget`, `go`, `cargo`, `conda`), безопасные кэши GUI/Electron-приложений (в т.ч. `Smart Close`), динамические системные кэши (`system_cache`), осиротевшие следы удалённых программ (`app_orphans`), безопасные артефакты AI/Dev-сред и Docker/OrbStack (`ai_dev_deep`), протухшие установщики и скриншоты в `~/Downloads`, устаревшие артефакты сборки в `~/Projects/*` (`node_modules`, `.venv`, `venv`, `.pytest_cache`, `__pycache__`, `target`) и примонтированные «призрачные» `.dmg` (`disk >= 6`).
 2. **Контур 2 — External APFS SSD (`/Volumes/secret for mine` — `Heavy Vault & Cold Archive`)**
    - Мониторит свободный объём, тип файловой системы (`APFS`) и 6 канонических полок (`01_AI_Models_and_Caches`, `02_Project_Heavy`, `03_Software_and_Installers`, `04_Media_Archive`, `90_Cold_Archive`, `99_Backups`), сохраняя активные корневые каталоги (`SSD_LIVE_HEAVY_DIRS`).
    - Принимает тяжёлые медиафайлы (`.mov`, `.mp4`, `.mkv` > 10 MiB) в `04_Media_Archive/Screen_Recordings/<YYYY-MM>/` строго после побайтового и SHA-256 подтверждения.
@@ -112,6 +112,7 @@ mac-nexus/
 ├── README.md                                        # Главный обзор, архитектура, инварианты и карта проекта
 ├── CLAUDE.md                                        # Контракты и правила для Claude Code / AI-агентов
 ├── AGENTS.md                                        # Системные ограничения для автономных агентов (Orca / Codex)
+├── .project-meta.json                               # Метаданные проекта для системного реестра и интеграций
 ├── Start_Mac_Nexus.command                          # Переносимый одношаговый CLI/Finder-лаунчер
 ├── docs/                                            # Полная инженерная документация системы
 │   ├── 00_master_index_and_system_map.md            # Мастер-индекс, роли, сквозная схема и Traceability Matrix
@@ -139,9 +140,9 @@ mac-nexus/
 │       └── zshenv.snippet.zsh                       # Блок ~/.zshenv для XDG и условного экспорта AI-кэшей
 ├── src/mac_nexus/                                   # Бэкенд (Python 3.12+ stdlib ONLY) и статика
 │   ├── __init__.py                                  # Метаданные APP_NAME и APP_VERSION (2.0.0)
-│   ├── server.py                                    # NexusHTTPServer, CSRF/Origin, REST + SSE маршрутизация
-│   ├── scanner.py                                   # ScanEnvironment DI, телеметрия, LIVE LOCK и 6 сканеров
-│   ├── executor.py                                  # DRY-RUN/боевые задачи, Trash, SHA-256 телепорт, EventBroker
+│   ├── server.py                                    # NexusHTTPServer, CSRF/Origin, 17 REST + SSE маршрутов
+│   ├── scanner.py                                   # ScanEnvironment DI, телеметрия, LIVE LOCK, 9 потоков скана + Deep Radar + Trash
+│   ├── executor.py                                  # DRY-RUN/боевые задачи, Smart Close, Trash, SHA-256 телепорт, EventBroker
 │   └── static/                                      # Автономный Cyber-HUD (0 внешних CDN)
 │       ├── index.html                               # 6 командных вкладок, реакторы, терминал и голо-окно (792 строки)
 │       ├── styles.css                               # Неоновая палитра, сетка, [hidden]-инвариант
@@ -165,7 +166,7 @@ mac-nexus/
 | [02 · APFS, XDG и macOS-внутренности](docs/02_macos_apfs_xdg_and_env_internals.md) | Контейнер APFS, `clonefile(2)`, `SF_DATALESS`, Purgeable, `~/.zshenv` + `launchctl setenv`, `tmutil` | Системные инженеры |
 | [03 · Стек 1 и Красная книга безопасности](docs/03_cleanup_stack_and_safety_bible.md) | Сравнение утилит, спецификации `organize`/`kondo`/`czkawka_cli`, защита от `lipo` и WAL-порчи | Инженеры автоматизации |
 | [04 · Backend, Scanner, Executor и Безопасность](docs/04_backend_scanner_executor_and_security.md) | `ScanEnvironment`, `ScanSnapshot`, `LIVE LOCK`, `is_protected_path`, SHA-256 телепорт, `EventBroker` | Backend-разработчики |
-| [05 · Справочник HTTP REST и SSE API](docs/05_http_rest_and_sse_api_reference.md) | Все 10 маршрутов `server.py`, заголовки CSRF, JSON-форматы, коды `200..500`, примеры `curl` | Разработчики и интеграторы |
+| [05 · Справочник HTTP REST и SSE API](docs/05_http_rest_and_sse_api_reference.md) | Все 17 маршрутов `server.py` (2 статических + 15 `/api/*`), CSRF, JSON-форматы, коды `200..500`, примеры `curl` | Разработчики и интеграторы |
 | [06 · Cyber-HUD Frontend и Mac Nexus.app](docs/06_cyber_hud_frontend_and_app_bundle.md) | `index.html`, `styles.css`, `app.js`, SSE-терминал, бандл `.app`, `generate_icon.py` | Frontend и UI-инженеры |
 | [07 · Регламенты, Runbooks и Troubleshooting](docs/07_automation_runbooks_and_troubleshooting.md) | Ритм обслуживания (день/неделя/месяц/квартал), диагностика сбоев, QA-чеклист и Roadmap | Операторы и сопровождение |
 | [08 · Гайд для агентов и Baseline-аудит](docs/08_agent_onboarding_and_baseline_audit.md) | Onboarding по `ScanEnvironment` DI, безопасное расширение категорий и аудит Фаз 1–3 (`94% -> 87%`) | ИИ-агенты и аудиторы |
@@ -182,7 +183,7 @@ mac-nexus/
    - Раздача `/static/*` блокирует path traversal (`..`, `/`, `\`, выход за пределы `static_dir`) и пропускает только `ALLOWED_STATIC_MIME`.
 
 2. **Server-Side Snapshot Allowlisting (никаких сырых путей и shell-строк)**
-   - Мутирующие маршруты (`/api/execute`, `/api/offload`, `/api/trash-duplicates`) принимают **только** непрозрачные серверные идентификаторы (`item_ids`, `media_ids`, `file_ids`), сгенерированные через `_stable_id()` (14 hex-символов SHA-256) и проверенные по активному `ScanSnapshot`.
+   - Мутирующие и reveal-маршруты (`/api/execute`, `/api/offload`, `/api/smart-close-clean`, `/api/radar-action`, `/api/radar-reveal`, `/api/empty-trash`, `/api/trash-duplicates`) принимают **только** непрозрачные серверные идентификаторы (`item_ids`, `item_id`, `media_ids`, `radar_ids`, `radar_id`, `trash_ids`, `file_ids`), сгенерированные через `_stable_id()` (14 hex-символов SHA-256) и проверенные по активному `ScanSnapshot` (`items_by_id`, `offload_by_id`, `radar_by_id`, `trash_by_id`, `dup_files_by_id`).
    - Произвольные пути файловой системы или команды из тела JSON отклоняются со статусом `HTTP 400`.
 
 3. **Динамическая защита `LIVE LOCK`**

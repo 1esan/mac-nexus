@@ -31,7 +31,7 @@ Key code & runtime paths:
 2. **Loopback & CSRF Enforcement (`127.0.0.1` + `X-Mac-Nexus-Client: 1`)**
    - Bind `NexusHTTPServer` (`ThreadingHTTPServer`) exclusively to `127.0.0.1` (default port `8790`).
    - Require `X-Mac-Nexus-Client: 1` on every `POST /api/*` request and verify `Origin` (if present) uses `http` with hostname `127.0.0.1` or `localhost`; return `HTTP 403` otherwise.
-   - Accept only server-issued snapshot IDs (`item_ids`, `media_ids`, `file_ids`) — never raw filesystem paths or arbitrary shell strings from HTTP JSON (`HTTP 400`).
+   - Accept only server-issued snapshot IDs (`item_ids`, `item_id`, `media_ids`, `radar_ids`, `radar_id`, `trash_ids`, `file_ids`) validated against `ScanSnapshot` (`items_by_id`, `offload_by_id`, `radar_by_id`, `trash_by_id`, `dup_files_by_id`) — never raw filesystem paths or arbitrary shell strings from HTTP JSON (`HTTP 400`).
 
 3. **`LIVE LOCK` & `Orca` Worktree Enforcement**
    - Check live processes (`pgrep -x` across the 11 `MONITORED_APPS` incl. `Yandex Music` / `Яндекс Музыка`, plus `pgrep -fi rider`), active `Orca` worktrees (`orca worktree ps --limit 30 --json` + text fallback), live local service PIDs (`lsof` ports `3000`, `8768`), and open DMG mounts (`disk >= 6` only; never `disk0..disk5`).

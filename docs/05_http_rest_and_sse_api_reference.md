@@ -2,7 +2,7 @@
 
 # 05 · Справочник HTTP REST и SSE API
 
-Этот документ представляет собой исчерпывающую спецификацию всех 16 HTTP REST эндпоинтов, раздачи статики и потока Server-Sent Events (SSE), реализованных в [`server.py`](../src/mac_nexus/server.py), [`scanner.py`](../src/mac_nexus/scanner.py) и [`executor.py`](../src/mac_nexus/executor.py) для Mac Nexus **v2.0.0**.
+Этот документ представляет собой исчерпывающую спецификацию всех 17 HTTP REST/SSE маршрутов (2 статических + 15 `/api/*` эндпоинтов), реализованных в [`server.py`](../src/mac_nexus/server.py), [`scanner.py`](../src/mac_nexus/scanner.py) и [`executor.py`](../src/mac_nexus/executor.py) для Mac Nexus **v2.0.0**.
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### Запуск сервера и CLI-аргументы
 
-Точка входа `python3 -m mac_nexus.server` ([`server.py:383-400`](../src/mac_nexus/server.py#L383-L400)) запускает `NexusHTTPServer` (наследник `ThreadingHTTPServer`, `protocol_version = "HTTP/1.1"`, `allow_reuse_address = True`, `daemon_threads = True`):
+Точка входа `python3 -m mac_nexus.server` ([`server.py:523-540`](../src/mac_nexus/server.py#L523-L540)) запускает `NexusHTTPServer` (наследник `ThreadingHTTPServer`, `protocol_version = "HTTP/1.1"`, `allow_reuse_address = True`, `daemon_threads = True`):
 
 | Аргумент CLI | Тип | Значение по умолчанию | Ограничения |
 | :--- | :--- | :--- | :--- |
@@ -24,13 +24,13 @@
    - `X-Content-Type-Options: nosniff`
    - Для всех JSON-ответов: `Content-Type: application/json; charset=utf-8` и точный `Content-Length`.
    - Формат ошибок JSON: `{"ok": false, "error": "<описание ошибки>"}`.
-2. **Ограничение JSON-запросов (`_read_json_body`, [`server.py:144-165`](../src/mac_nexus/server.py#L144-L165)):**
+2. **Ограничение JSON-запросов (`_read_json_body`, [`server.py:160-181`](../src/mac_nexus/server.py#L160-L181)):**
    - Константа `MAX_JSON_BODY_BYTES = 1048576` (`1024 * 1024` байт = **1 MiB**).
    - Если `Content-Length` отсутствует или пуст, считается `"0"`, а тело трактуется как `b"{}"`.
    - Если `Content-Length` не целое число → `400 Bad Request` (`"Invalid Content-Length"`).
    - Если `length < 0` или `length > MAX_JSON_BODY_BYTES` → `413 Request Entity Too Large` (`"Body too large"`).
    - Если тело не декодируется в UTF-8, не является валидным JSON или верхнеуровневый тип не JSON-объект (`dict`) → `400 Bad Request`.
-3. **Защита от CSRF на всех `POST /api/*` (`_check_post_csrf`, [`server.py:125-142`](../src/mac_nexus/server.py#L125-L142)):**
+3. **Защита от CSRF на всех `POST /api/*` (`_check_post_csrf`, [`server.py:141-158`](../src/mac_nexus/server.py#L141-L158)):**
    - Заголовок `X-Mac-Nexus-Client` **обязателен** и после `.strip()` должен быть равен `"1"` (иначе `403 Forbidden: missing X-Mac-Nexus-Client header`).
    - Если в запросе присутствует заголовок `Origin`, функция `_is_valid_origin` разбирает его через `urlsplit` и требует `scheme == "http"` и `hostname in {"127.0.0.1", "localhost"}` (иначе `403 Forbidden: invalid Origin`).
    - Запросы `POST` на маршруты вне префикса `/api/` отклоняются с `404` до проверки CSRF.
@@ -77,10 +77,10 @@ sequenceDiagram
 
 ### `GET /` и `GET /static/<filename>`
 
-Раздаёт встроенные файлы фронтенда из `NexusAppContext.static_dir` (по умолчанию `src/mac_nexus/static`). Маршрут `/` внутренне делегируется в `_send_static_file("index.html")` ([`server.py:171-177`](../src/mac_nexus/server.py#L171-L177)).
+Раздаёт встроенные файлы фронтенда из `NexusAppContext.static_dir` (по умолчанию `src/mac_nexus/static`). Маршрут `/` внутренне делегируется в `_send_static_file("index.html")` ([`server.py:187-193`](../src/mac_nexus/server.py#L187-L193)).
 
 - **Защита пути:** URL-декодирование (`unquote`), удаление ведущего `/`; запрещены пустые имена, `..` в частях пути, любые `/` и `\` (вложенные поддиректории в `/static/` не поддерживаются — файлы лежат плоским списком), а также выход за пределы `static_dir.resolve()`. Нарушение → `403 Forbidden`.
-- **Белый список MIME-типов (`ALLOWED_STATIC_MIME`, [`server.py:38-45`](../src/mac_nexus/server.py#L38-L45)):**
+- **Белый список MIME-типов (`ALLOWED_STATIC_MIME`, [`server.py:44-51`](../src/mac_nexus/server.py#L44-L51)):**
 
 | Расширение | Заголовок `Content-Type` | Примечание |
 | :--- | :--- | :--- |
@@ -114,7 +114,7 @@ sequenceDiagram
 
 ### `GET /api/telemetry`
 
-Возвращает телеметрию трёх контуров хранения, состояние CPU/RAM/Swap, счётчики призрачных `.dmg` и активных Orca worktrees, а также накопленную статистику из `history.json`. Опрашивается фронтендом при старте, после завершения задач и в фоновом цикле каждые `15` секунд ([`app.js:1905-1909`](../src/mac_nexus/static/app.js#L1905-L1909)).
+Возвращает телеметрию трёх контуров хранения, состояние CPU/RAM/Swap, счётчики призрачных `.dmg` и активных Orca worktrees, краткую сводку `~/.Trash` и накопленную статистику из `history.json`. Опрашивается фронтендом при старте, после завершения задач и в фоновом цикле каждые `15` секунд ([`app.js:2751-2756`](../src/mac_nexus/static/app.js#L2751-L2756)).
 
 - **Ответ `200 OK`:**
   ```json
@@ -183,16 +183,16 @@ sequenceDiagram
 - **Примечания к полям:**
   - Если SSD отмонтирован (`mounted: false`), все числовые метрики `planes.ssd` равны `0`, `fs_type` равен `"unmounted"`, а в `shelves` все 6 полок имеют `"exists": false`.
   - Допустимые значения `system.ram_pressure`: `"normal"`, `"warning"`, `"critical"`.
-  - `trash.tcc_restricted: true` — macOS TCC запретил доступ к `~/.Trash`; в этом случае `total_bytes` и `item_count` — приблизительные данные от Finder, а полный список элементов недоступен.
+  - `trash.tcc_restricted: true` — macOS TCC запретил прямой `os.scandir` по `~/.Trash`; в этом случае `total_bytes` равен `0`, а `item_count` заполняется количеством элементов из AppleScript-запроса к Finder (без детализации элементов до вызова `mode: "finder_empty"`).
 
 ---
 
 ### `GET /api/scan?older_days=30`
 
-Выполняет read-only сканирование всех 6 направлений (пакетные кэши, кэши GUI-программ, Downloads Inbox, артефакты `~/Projects`, смонтированные DMG и тяжёлые медиафайлы для SSD) и обновляет серверный `ScanSnapshot` (`items_by_id` и `offload_by_id`) под `snapshot_lock`.
+Выполняет read-only сканирование всех 8 категорий очистки (пакетные кэши incl. `go`/`cargo`, кэши GUI-программ со `Smart Close`-метаданными, динамические `system_cache`, `app_orphans`, `ai_dev_deep` & Docker Prune, Downloads Inbox, артефакты `~/Projects`, смонтированные DMG) и тяжёлых медиафайлов для SSD (всего 9 параллельных потоков), обновляя серверный `ScanSnapshot` (`items_by_id` и `offload_by_id`) под `snapshot_lock`.
 
 - **Query-параметр:**
-  - `older_days` (`int`, по умолчанию `30`): возрастной порог в днях для `dev_projects` и `organize_triage`. Значения принудительно ограничиваются диапазоном `[0, 3650]`. Некорректное нечисловое значение автоматически откатывается к `30`.
+  - `older_days` (`int`, по умолчанию `30`): возрастной порог в днях для `dev_projects`, `organize_triage` и архивов сессий Codex. Значения принудительно ограничиваются диапазоном `[0, 3650]`. Некорректное нечисловое значение автоматически откатывается к `30`.
 - **Ответ `200 OK`:**
   ```json
   {
@@ -217,7 +217,9 @@ sequenceDiagram
         "action_kind": "rm_artifact",
         "risk": "medium",
         "age_days": 45.0,
-        "matched_count": 1
+        "matched_count": 1,
+        "quittable": false,
+        "browser_warning": false
       },
       {
         "id": "app_9f8e7d6c5b4a32",
@@ -231,7 +233,10 @@ sequenceDiagram
         "action_kind": "clean_cache",
         "risk": "low",
         "age_days": 0.1,
-        "matched_count": 3
+        "matched_count": 3,
+        "quittable": true,
+        "quit_app_name": "Google Chrome",
+        "browser_warning": true
       }
     ],
     "offload_candidates": [
@@ -252,8 +257,9 @@ sequenceDiagram
 
 - **Словарь перечислений (`items[]`):**
   - `category`: `"pkg_cache"` | `"app_cache"` | `"system_cache"` | `"app_orphans"` | `"ai_dev_deep"` | `"downloads_inbox"` | `"dev_projects"` | `"ghost_dmgs"`
-  - `action_kind`: `"prune"` | `"clean_cache"` | `"trash"` | `"organize"` | `"rm_artifact"` | `"detach_dmg"`
-  - `risk`: `"low"` | `"medium"` (`"low"` для кэшей, загрузок, DMG и `__pycache__`/`.pytest_cache`; `"medium"` для `node_modules`, `.venv`, `venv`, `target`)
+  - `action_kind`: `"prune"` | `"clean_cache"` | `"trash"` | `"organize"` | `"rm_artifact"` | `"detach_dmg"` | `"docker_prune"`
+  - `risk`: `"low"` | `"medium"` (`"low"` для кэшей, загрузок, DMG и `__pycache__`/`.pytest_cache`; `"medium"` для `node_modules`/`.venv`/`venv`/`target`, `app_orphans`, `docker_prune` и архивных сессий/бэкапов в `ai_dev_deep`)
+  - `quittable` / `quit_app_name` / `browser_warning`: метаданные `Smart Close` для `app_cache` (для `orca` и `vscode` `quittable: false` — кнопка Smart Close не выдаётся; `quit_app_name` присутствует при `quittable: true`)
   - `summary.organize_candidates_count`: сумма `matched_count` всех элементов с `category == "downloads_inbox"`.
 
 ---
@@ -262,7 +268,7 @@ sequenceDiagram
 
 Открывает постоянное однонаправленное соединение `text/event-stream` для трансляции логов, прогресса и счётчиков освобождённых байтов из фоновых заданий [`executor.py`](../src/mac_nexus/executor.py) в реальном времени.
 
-- **Заголовки ответа `200 OK` (`_handle_sse`, [`server.py:215-239`](../src/mac_nexus/server.py#L215-L239)):**
+- **Заголовки ответа `200 OK` (`_handle_sse`, [`server.py:250-274`](../src/mac_nexus/server.py#L250-L274)):**
   - `Content-Type: text/event-stream; charset=utf-8`
   - `Cache-Control: no-cache`
   - `Connection: keep-alive`
@@ -291,7 +297,7 @@ sequenceDiagram
     - `"done"` — финальное событие завершения задания (и при `dry_run: true`, и при живом запуске), несёт итоговый `bytes` (при `dry_run: true` равен `0`).
   - `message` (`str`): текст для Cyber-Terminal.
   - `bytes` (`int`): количество освобождённых байт (`0` для `progress` и `log`).
-  - `job_id` (`str | null`): идентификатор задания (`exec_...` или `offload_...`).
+  - `job_id` (`str | null`): идентификатор задания (`exec_...`, `offload_...`, `smart_...`, `radar_...`).
   - `ts` (`float`): Unix timestamp публикации события.
 - **Корректное завершение:** при переполнении очереди (более 500 непрочитанных событий) вытесняется самое старое событие; при обрыве сокета или остановке сервера (`shutdown_event`) подписчик автоматически отписывается в `finally`.
 
@@ -300,7 +306,7 @@ sequenceDiagram
 ## 4. Мутирующие `POST`-эндпоинты
 
 > [!IMPORTANT]
-> Каждый `POST /api/*` маршрут требует заголовок `X-Mac-Nexus-Client: 1` (и корректный loopback `Origin`, если он передан). Все пути передаются **только** через серверные непрозрачные ID, полученные в предыдущих ответах `/api/scan` или `/api/duplicates`.
+> Каждый `POST /api/*` маршрут требует заголовок `X-Mac-Nexus-Client: 1` (и корректный loopback `Origin`, если он передан). Все пути передаются **только** через серверные непрозрачные ID, полученные в предыдущих ответах `/api/scan`, `/api/deep-radar`, `/api/trash` или `/api/duplicates`.
 
 ### `POST /api/execute`
 
@@ -322,7 +328,7 @@ sequenceDiagram
   - `200 OK`: `{"ok": true, "job_id": "exec_1a2b3c4d5e"}`
   - `400 Bad Request`: некорректный JSON, `item_ids` не `list[str]`, пустой список `item_ids`, неизвестный/устаревший ID.
   - `403 Forbidden`: отсутствует `X-Mac-Nexus-Client: 1` или невалидный `Origin`.
-  - `409 Conflict`: `{"ok": false, "error": "LIVE LOCK: <причина блокировки>"}` (обратите внимание: префикс `"LIVE LOCK: "` добавляется именно обработчиком `/api/execute` в [`server.py:274`](../src/mac_nexus/server.py#L274)).
+  - `409 Conflict`: `{"ok": false, "error": "LIVE LOCK: <причина блокировки>"}` (обратите внимание: префикс `"LIVE LOCK: "` добавляется именно обработчиком `/api/execute` в [`server.py:305`](../src/mac_nexus/server.py#L305)).
   - `413 Request Entity Too Large`: тело больше 1 MiB.
 
 ---
@@ -440,7 +446,7 @@ sequenceDiagram
     "tool": "digest"
   }
   ```
-- **Allowlist допустимых значений `tool` ([`executor.py:596-621`](../src/mac_nexus/executor.py#L596-L621)):**
+- **Allowlist допустимых значений `tool` ([`executor.py:1106-1132`](../src/mac_nexus/executor.py#L1106-L1132)):**
 
 | Значение `tool` | Выполняемое действие | Успешный ответ `200 OK` | Возможная ошибка |
 | :--- | :--- | :--- | :--- |
@@ -457,40 +463,65 @@ sequenceDiagram
 
 ### `GET /api/deep-radar?min_mb=50`
 
-Выполняет X-Ray сканирование файловой системы в поисках гигантских файлов (логический размер ≥ `min_mb` MiB), вычисляет физически занятые блоки (sparse-aware) и обновляет `ScanSnapshot.radar_by_id`.
+Выполняет X-Ray сканирование файловой системы в поисках крупных перемещаемых пользовательских файлов (глубина ≤ 3 в `Downloads`, `Desktop`, `Documents`, `Movies`) и неразрушаемых системных X-Ray узлов (физический расход `>= min_mb` MiB через `_physical_file_size(st)` = `st_blocks * 512`), обновляя `ScanSnapshot.radar_by_id`. Выдаёт топ-80 записей по убыванию `size_bytes`.
 
-- **Query-параметр:** `min_mb` (`int`, по умолчанию `50`; допустимо `50`, `250`, `1024` MiB).
+- **Query-параметр:** `min_mb` (`int`, по умолчанию `50`, принудительно ограничивается диапазоном `[1, 102400]`; некорректное значение откатывается к `50`; в UI доступны пресеты `50`, `250`, `1024` MiB).
 - **Ответ `200 OK`:**
   ```json
   {
     "ok": true,
     "scanned_at": "2026-11-18T04:00:00+03:00",
     "min_mb": 50,
+    "summary": {
+      "total_bytes": 12884901888,
+      "movable_bytes": 2147483648,
+      "hotspot_bytes": 10737418240,
+      "count": 2
+    },
     "items": [
       {
-        "id": "radar_a1b2c3d4e5f601",
-        "path": "/Users/demo/Library/Containers/com.docker.docker/Data/vms/0/data",
-        "name": "data",
-        "size_bytes": 12884901888,
-        "physical_bytes": 2147483648,
-        "is_sparse": true,
-        "is_hotspot": true,
+        "id": "hotspot_a1b2c3d4e5f601",
+        "title": "OrbStack VM (data.img.raw)",
+        "path": "/Users/demo/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data/data.img.raw",
+        "rel_path": "Library/Group Containers/HUAQ24HBR6.dev.orbstack/data/data.img.raw",
+        "kind": "hotspot",
+        "size_bytes": 10737418240,
+        "logical_bytes": 245107802624,
         "mtime": "2026-11-18T02:00:00+03:00",
-        "age_days": 0.1
+        "age_days": 0.1,
+        "can_trash": false,
+        "can_teleport": false,
+        "default_shelf": "",
+        "note": "Разрежённый (sparse) виртуальный диск OrbStack. Для сжатия используйте Docker Prune во вкладке Радар или настройки OrbStack."
+      },
+      {
+        "id": "radar_0123456789abcd",
+        "title": "sample_archive.iso",
+        "path": "/Users/demo/Downloads/sample_archive.iso",
+        "rel_path": "Downloads/sample_archive.iso",
+        "kind": "file",
+        "size_bytes": 2147483648,
+        "logical_bytes": 2147483648,
+        "mtime": "2026-10-12T10:00:00+03:00",
+        "age_days": 37.0,
+        "can_trash": true,
+        "can_teleport": true,
+        "default_shelf": "03_Software_and_Installers",
+        "note": "Готов к SHA-256 переносу на полку 03_Software_and_Installers или в Корзину"
       }
     ]
   }
   ```
 - **Поля `items[]`:**
-  - `is_sparse: true` — `logical_bytes > physical_bytes * 1.2` (OrbStack, Docker sparse files).
-  - `is_hotspot: true` — файл заблокирован открытым процессом (не может быть безопасно перемещён, только Finder Reveal).
-- **Ошибки:** `403` (CSRF).
+  - `id`: префикс `radar_<14hex>` для перемещаемых файлов (`kind: "file"`), `hotspot_<14hex>` для X-Ray узлов (`kind: "hotspot"`).
+  - `size_bytes` vs `logical_bytes`: `size_bytes` — реально занятые физические блоки на APFS (`_physical_file_size`), `logical_bytes` — логический `st_size`. В Cyber-HUD ([`app.js`](../src/mac_nexus/static/app.js)) признак разрежённого файла (`SPARSE`) вычисляется как `logical_bytes > size_bytes * 1.2`.
+  - `kind: "hotspot"` (`can_trash: false`, `can_teleport: false`): защищён от удаления и телепорта (`HTTP 409` в `/api/radar-action`); для него доступен только `POST /api/radar-reveal` (показ в Finder).
 
 ---
 
 ### `GET /api/trash`
 
-Возвращает содержимое `~/.Trash` с обработкой TCC-ограничений macOS.
+Инспектирует `~/.Trash` с вычислением объёма записей старше `7` и `30` дней, обновляет `ScanSnapshot.trash_by_id` и корректно обрабатывает TCC-ограничения macOS (`PermissionError`).
 
 - **Ответ `200 OK` (доступ разрешён):**
   ```json
@@ -498,42 +529,48 @@ sequenceDiagram
     "ok": true,
     "tcc_restricted": false,
     "total_bytes": 524288000,
-    "item_count": 3,
+    "older_7d_bytes": 209715200,
+    "older_30d_bytes": 0,
+    "item_count": 2,
+    "finder_item_count": 2,
     "items": [
       {
         "id": "trash_11223344556677",
         "name": "old_project.zip",
         "path": "/Users/demo/.Trash/old_project.zip",
+        "is_dir": false,
         "size_bytes": 209715200,
-        "mtime": "2026-11-15T10:00:00+03:00",
-        "age_days": 3.0
+        "mtime": "2026-11-05T10:00:00+03:00",
+        "age_days": 13.0
       }
     ]
   }
   ```
-- **Ответ `200 OK` (TCC-ограничение):**
+- **Ответ `200 OK` (TCC-ограничение, `PermissionError` при `os.scandir`):**
   ```json
   {
     "ok": true,
     "tcc_restricted": true,
-    "finder_item_count": 5,
     "total_bytes": 0,
-    "item_count": 0,
+    "older_7d_bytes": 0,
+    "older_30d_bytes": 0,
+    "item_count": 5,
+    "finder_item_count": 5,
     "items": []
   }
   ```
-- **Ошибки:** `403` (CSRF).
+  В этом режиме количество элементов запрашивается через `osascript` (`Finder`), а очистка доступна через `POST /api/empty-trash` с `"mode": "finder_empty"` или `POST /api/open-tool` с `"tool": "finder_trash"`.
 
 ---
 
 ### `POST /api/smart-close-clean`
 
-Автоматически закрывает приложение через `pgrep -x` / `osascript quit`, очищает его кэш, при `reopen: true` перезапускает.
+Запускает фоновую задачу: мягко закрывает разрешённое GUI-приложение через `osascript`, ждёт исчезновения процесса по `pgrep -x` (до `10` секунд с шагом `0.25` с), очищает его allowlisted-кэш через `_clear_cache_dir_contents` и при `reopen: true` перезапускает приложение (`open -a`).
 
 > [!CAUTION]
-> **HARD-FORBIDDEN для `Orca` и `VS Code`:** если `item.app_key in {"orca", "vscode"}`, немедленно возвращается `HTTP 409` без запуска задачи. Это правило не обходится флагом `dry_run: true`.
+> **HARD-FORBIDDEN для `Orca` и `VS Code`:** если `item.app_key in {"orca", "vscode"}` (или `category != "app_cache"` / `quittable != true`), немедленно возвращается `HTTP 409` без запуска задачи. Это правило не обходится флагом `dry_run: true`.
 
-- **Тело запроса:**
+- **Тело запроса (`application/json`):**
   ```json
   {
     "item_id": "app_9f8e7d6c5b4a32",
@@ -541,62 +578,61 @@ sequenceDiagram
     "dry_run": true
   }
   ```
+  Поля `reopen` и `dry_run` опциональны (`bool`, по умолчанию `true`).
 - **Ответы:**
-  - `200 OK`: `{"ok": true, "job_id": "smartclose_a1b2c3d4e5"}`
-  - `400 Bad Request`: неизвестный `item_id` или не `app_cache` категория.
-  - `403 Forbidden`: CSRF.
-  - `409 Conflict`: **HARD prohibition** для `orca`/`vscode`; или приложение всё ещё активно после 10с таймаута.
+  - `200 OK`: `{"ok": true, "job_id": "smart_a1b2c3d4e5"}` (асинхронно транслирует прогресс в SSE; если при `dry_run: false` процесс не завершился за `10` секунд или запустился повторно, воркер прерывается с SSE-сообщением `[LOCK-GUARD] Таймаут закрытия ...` без касания кэша).
+  - `400 Bad Request`: `item_id` не непустая строка, `reopen`/`dry_run` не boolean, либо неизвестный/устаревший `item_id`.
+  - `403 Forbidden`: сбой CSRF / `Origin`.
+  - `409 Conflict`: **HARD prohibition** для `orca`/`vscode`, не-`app_cache` категория, `not quittable` или недопустимое имя приложения.
+  - `413 Request Entity Too Large`: тело больше 1 MiB.
 
 ---
 
 ### `POST /api/radar-action`
 
-Запускает фоновую задачу перемещения или телепорта файлов из Deep Radar.
+Запускает фоновую задачу перемещения в Корзину или SHA-256 телепорта файлов из Deep Radar (`ScanSnapshot.radar_by_id`).
 
-- **Тело запроса:**
+- **Тело запроса (`application/json`):**
   ```json
   {
-    "radar_ids": ["radar_a1b2c3d4e5f601"],
+    "radar_ids": ["radar_0123456789abcd"],
     "action": "teleport_ssd",
     "shelf": "04_Media_Archive",
     "dry_run": true
   }
   ```
-- **Поле `action`:** `"trash"` (-> `~/.Trash`) | `"teleport_ssd"` (-> `{shelf}/Manual_Offload/{YYYY-MM}/`).
-- **Поле `shelf`:** обязателен при `action == "teleport_ssd"`; проверяется по allowlist `SSD_SHELVES` (`01_AI_Models_and_Caches`, `02_Project_Heavy`, `03_Software_and_Installers`, `04_Media_Archive`, `90_Cold_Archive`, `99_Backups`).
+- **Поле `action`:** `"trash"` (`-> ~/.Trash` через `move_to_trash`) | `"teleport_ssd"` (`-> {ssd_mount}/{shelf}/Manual_Offload/{YYYY-MM}/` через `teleport_file_sha256`).
+- **Поле `shelf`:** `str` (опционально, по умолчанию `"90_Cold_Archive"`); проверяется по allowlist `SSD_SHELVES` (`01_AI_Models_and_Caches`, `02_Project_Heavy`, `03_Software_and_Installers`, `04_Media_Archive`, `90_Cold_Archive`, `99_Backups`).
+- **Поле `dry_run`:** `bool` (опционально, по умолчанию `true`).
 - **Ответы:**
-  - `200 OK`: `{"ok": true, "job_id": "radar_action_x1y2z3"}`
-  - `400`: неизвестный ID или невалидный `shelf`.
-  - `403`: CSRF.
-  - `409`: hotspot-файл (is_hotspot) или отмонтированный SSD.
+  - `200 OK`: `{"ok": true, "job_id": "radar_a1b2c3d4e5"}`
+  - `400 Bad Request`: невалидные типы полей, пустой список `radar_ids`, неизвестный `radar_id`, недопустимые `action` или `shelf`.
+  - `403 Forbidden`: сбой CSRF / `Origin`.
+  - `409 Conflict`: `is_protected_path`, X-Ray `hotspot` (`kind == "hotspot"`), запрещённое действие (`not can_trash`/`not can_teleport`), или отмонтированный SSD (при `action == "teleport_ssd"` и `dry_run == false`).
+  - `413 Request Entity Too Large`: тело больше 1 MiB.
 
 ---
 
 ### `POST /api/radar-reveal`
 
-Открывает родительскую папку файла из Deep Radar в Finder (эквивалент «Показать в Finder»).
+Раскрывает файл или X-Ray каталог из Deep Radar в Finder (`open -R <path>`). Выполняется синхронно.
 
-- **Тело запроса:**
+- **Тело запроса (`application/json`):**
   ```json
   {
-    "radar_id": "radar_a1b2c3d4e5f601"
+    "radar_id": "radar_0123456789abcd"
   }
   ```
 - **Ответ `200 OK`:** `{"ok": true}`
-- **Ошибки:** `400` (неизвестный `radar_id`), `403` (CSRF), `500` (сбой `open -R`).
-
-```zsh
-# Пример: открыть файл из Deep Radar в Finder
-curl -fsS -X POST http://127.0.0.1:8790/api/radar-reveal   -H "Content-Type: application/json"   -H "X-Mac-Nexus-Client: 1"   -d '{"radar_id": "<RADAR_ID_FROM_DEEP_RADAR>"}'
-```
+- **Ошибки:** `400` (`radar_id` не непустая строка, отсутствует в `radar_by_id` или путь больше не существует на диске), `403` (CSRF / `Origin`), `413` (>1 MiB), `500` (ненулевой код возврата `open -R`).
 
 ---
 
 ### `POST /api/empty-trash`
 
-Запускает фоновую задачу очистки Корзины в одном из трёх режимов.
+Синхронно (в рамках HTTP-запроса, под `snapshot_lock`, с публикацией событий в SSE) очищает или симулирует очистку Корзины `~/.Trash` в одном из трёх режимов (`purge_trash_items`).
 
-- **Тело запроса:**
+- **Тело запроса (`application/json`):**
   ```json
   {
     "mode": "older_than",
@@ -604,20 +640,30 @@ curl -fsS -X POST http://127.0.0.1:8790/api/radar-reveal   -H "Content-Type: app
     "dry_run": true
   }
   ```
-- **Поле `mode`:**
-  - `"selected"` — удалить только указанные `trash_ids` (обязательно при этом режиме).
-  - `"older_than"` — удалить элементы старше `older_days` дней (по умолчанию `30`).
-  - `"finder_empty"` — очистить через `osascript` Finder Empty Trash (обходит TCC, работает даже при `tcc_restricted: true`).
-- **Ответы:**
-  - `200 OK`: `{"ok": true, "job_id": "trash_empty_p1q2r3"}`
-  - `400`: неверный `mode` или `trash_ids` при `mode != "selected"`.
-  - `403`: CSRF.
-  - `409`: `dry_run == false` и элемент не в `env.trash_dir` (containment violation).
-
-```zsh
-# DRY-RUN: симуляция очистки элементов старше 30 дней
-curl -fsS -X POST http://127.0.0.1:8790/api/empty-trash   -H "Content-Type: application/json"   -H "X-Mac-Nexus-Client: 1"   -d '{"mode": "older_than", "older_days": 30, "dry_run": true}'
-```
+- **Поле `mode` (`str`):**
+  - `"selected"` — удалить только указанные `trash_ids` (непустой `list[str]` обязателен).
+  - `"older_than"` — удалить элементы `trash_by_id` с `age_days >= older_days` (`older_days >= 0`, по умолчанию `30`).
+  - `"finder_empty"` — вызвать `osascript -e 'tell application "Finder" to empty trash'` (обходит TCC, работает даже при `tcc_restricted: true`).
+- **Ответ `200 OK`:**
+  - Режимы `"selected"` и `"older_than"`:
+    ```json
+    {
+      "ok": true,
+      "dry_run": true,
+      "purged_count": 2,
+      "reclaimed_bytes": 209715200
+    }
+    ```
+  - Режим `"finder_empty"` при `dry_run: true`:
+    `{"ok": true, "dry_run": true, "purged_count": 0, "reclaimed_bytes": 0, "message": "DRY-RUN: Finder empty trash preview"}`
+  - Режим `"finder_empty"` при `dry_run: false`:
+    `{"ok": true, "dry_run": false, "purged_count": -1, "reclaimed_bytes": 0}`
+- **Ошибки:**
+  - `400 Bad Request`: неверный `mode`, невалидный тип `trash_ids`/`older_days`/`dry_run`, пустой `trash_ids` при `mode == "selected"`, либо неизвестный `trash_id`.
+  - `403 Forbidden`: сбой CSRF / `Origin`.
+  - `409 Conflict`: нарушение containment guard `_verify_inside_trash` (объект вне `env.trash_dir` или равна сама папка `~/.Trash`).
+  - `413 Request Entity Too Large`: тело больше 1 MiB.
+  - `500 Internal Server Error`: сбой AppleScript при `mode == "finder_empty"` (`dry_run: false`).
 
 ---
 
@@ -629,9 +675,9 @@ curl -fsS -X POST http://127.0.0.1:8790/api/empty-trash   -H "Content-Type: appl
 | `400` | `BAD_REQUEST` | `_read_json_body`, `POST /api/*` | Неверный `Content-Length`, битый JSON, не-объект JSON, неверный тип поля, пустой список ID, `UnknownTargetError`, `ValueError` |
 | `403` | `FORBIDDEN` | `_send_static_file`, `_check_post_csrf` | Отсутствует `X-Mac-Nexus-Client: 1`, поддельный `Origin`, path traversal в `/static/*`, неподдерживаемое расширение файла |
 | `404` | `NOT_FOUND` | `_send_static_file`, `do_GET`, `do_POST` | Отсутствующий статический файл, неизвестный маршрут |
-| `409` | `CONFLICT` | `/api/execute`, `/api/offload`, `/api/smart-close-clean`, `/api/radar-action`, `/api/empty-trash`, `/api/duplicates`, `/api/trash-duplicates`, `/api/open-tool` | Активный `LIVE LOCK`, Smart Close HARD-запрет (`orca`/`vscode`), защищённый путь, отмонтированный внешний SSD, hotspot-файл или сбой `czkawka_cli` |
+| `409` | `CONFLICT` | `/api/execute`, `/api/offload`, `/api/smart-close-clean`, `/api/radar-action`, `/api/radar-reveal`, `/api/empty-trash`, `/api/duplicates`, `/api/trash-duplicates`, `/api/open-tool` | Активный `LIVE LOCK`, Smart Close HARD-запрет (`orca`/`vscode`), защищённый путь (`_verify_inside_trash`, `is_protected_path`), отмонтированный внешний SSD, X-Ray `hotspot`-узел или сбой `czkawka_cli` |
 | `413` | `REQUEST_ENTITY_TOO_LARGE` | `_read_json_body` | `Content-Length < 0` или `> 1048576` байт (1 MiB) |
-| `500` | `INTERNAL_SERVER_ERROR` | `/api/open-tool` | Ошибка запуска `open` (`RuntimeError` при ненулевом `returncode`) |
+| `500` | `INTERNAL_SERVER_ERROR` | `/api/radar-reveal`, `/api/empty-trash`, `/api/open-tool` | Ошибка запуска `open` / `open -R` или AppleScript `Finder empty trash` (`RuntimeError`) |
 
 ---
 
@@ -687,6 +733,36 @@ curl -i -X POST http://127.0.0.1:8790/api/open-tool \
   -H "X-Mac-Nexus-Client: 1" \
   -H "Origin: http://127.0.0.1.evil.com:8790" \
   -d '{"tool": "digest"}'
+
+# 11. Read-only сканирование Deep Radar (порог 50 MiB, физические блоки + X-Ray hotspots)
+curl -fsS "http://127.0.0.1:8790/api/deep-radar?min_mb=50" | python3 -m json.tool
+
+# 12. Read-only инспекция Корзины ~/.Trash (с поддержкой TCC fallback)
+curl -fsS http://127.0.0.1:8790/api/trash | python3 -m json.tool
+
+# 13. Симуляция Smart Close + очистки кэша (DRY-RUN: возьмите quittable app_id из шага 3)
+curl -fsS -X POST http://127.0.0.1:8790/api/smart-close-clean \
+  -H "Content-Type: application/json" \
+  -H "X-Mac-Nexus-Client: 1" \
+  -d '{"item_id": "<APP_ID_FROM_SCAN>", "reopen": true, "dry_run": true}'
+
+# 14. Симуляция действия Deep Radar (DRY-RUN: возьмите radar_id из шага 11)
+curl -fsS -X POST http://127.0.0.1:8790/api/radar-action \
+  -H "Content-Type: application/json" \
+  -H "X-Mac-Nexus-Client: 1" \
+  -d '{"radar_ids": ["<RADAR_ID_FROM_DEEP_RADAR>"], "action": "teleport_ssd", "shelf": "90_Cold_Archive", "dry_run": true}'
+
+# 15. Открытие объекта из Deep Radar в Finder (безопасный read-only reveal)
+curl -fsS -X POST http://127.0.0.1:8790/api/radar-reveal \
+  -H "Content-Type: application/json" \
+  -H "X-Mac-Nexus-Client: 1" \
+  -d '{"radar_id": "<RADAR_ID_FROM_DEEP_RADAR>"}'
+
+# 16. Симуляция очистки Корзины старше 30 дней (DRY-RUN)
+curl -fsS -X POST http://127.0.0.1:8790/api/empty-trash \
+  -H "Content-Type: application/json" \
+  -H "X-Mac-Nexus-Client: 1" \
+  -d '{"mode": "older_than", "older_days": 30, "dry_run": true}'
 ```
 
 ---

@@ -57,7 +57,7 @@
 
 ### 1.3 Почему отвергнуты CleanMyMac, `lipo`-утилиты и авто-очистители RAM
 
-1. **Псевдо-оптимизация «Освободить RAM» (`purge`):** На Apple Silicon (Unified Memory) операционная система кэширует недавно прочитанные файлы в свободной оперативной памяти. Запуск `sudo purge` (в CleanMyMac, BuhoCleaner или `mac-cleanup-py`) сбрасывает этот кэш: macOS немедленно вынуждена считывать страницы заново с NVMe, увеличивая задержки и износ контроллера. Реальной метрикой нехватки памяти является **Memory Pressure** и объём **Swap** — в `Mac Nexus` их рассчитывает [`_system_memory_metrics`](../src/mac_nexus/scanner.py#L630-L693) через `sysctl vm.swapusage` и `vm_stat`.
+1. **Псевдо-оптимизация «Освободить RAM» (`purge`):** На Apple Silicon (Unified Memory) операционная система кэширует недавно прочитанные файлы в свободной оперативной памяти. Запуск `sudo purge` (в CleanMyMac, BuhoCleaner или `mac-cleanup-py`) сбрасывает этот кэш: macOS немедленно вынуждена считывать страницы заново с NVMe, увеличивая задержки и износ контроллера. Реальной метрикой нехватки памяти является **Memory Pressure** и объём **Swap** — в `Mac Nexus` их рассчитывает [`_system_memory_metrics`](../src/mac_nexus/scanner.py#L880-L943) через `sysctl vm.swapusage` и `vm_stat`.
 2. **Миф о «Системных данных» (System Data) и вред тотальной очистки кэшей:** Раздел *System Data* в macOS — это не физический каталог, а бухгалтерский остаток (`Total Used − Явные категории`). Его раздувают локальные APFS-снапшоты, 4K-заставки (`com.apple.wallpaper/aerials/videos`), образы контейнеров (`OrbStack data.img.raw`) и веса нейросетей. Еженедельное удаление всех каталогов в `~/Library/Caches` заставляет IDE, браузеры и аудио/видео-плагины перекомпилировать кэши заново, сжигая CPU и TBW SSD, а чистка `/var/db/diagnostics` уничтожает системные логи расследования сбоев.
 3. **Разрыв с инженерным окружением:** Коммерческие «комбайны» не понимают разницы между `User/` и `Code Cache/` в Electron, не проверяют открытые Git worktrees `Orca.app`, не защищают локальные dev-серверы на `:3000` и не проверяют `os.path.ismount` перед переносом на внешний SSD.
 
@@ -116,7 +116,7 @@ flowchart LR
   ```zsh
   organize check && organize sim
   ```
-- Применение правил (вызывается только после подтверждения в [`clean-approve`](../automation/bin/clean-approve) или из `POST /api/execute` в [`_execute_single_target`](../src/mac_nexus/executor.py#L383-L385)):
+- Применение правил (вызывается только после подтверждения в [`clean-approve`](../automation/bin/clean-approve) или из `POST /api/execute` в [`_execute_single_target`](../src/mac_nexus/executor.py#L477-L479)):
   ```zsh
   organize check && organize run
   ```
@@ -176,7 +176,7 @@ flowchart LR
 2. Даже при наличии текстового `-n` в `kondo 0.9`, утилита **не умеет** выдавать структурированный JSON, не детализирует вес отдельных подкаталогов (`node_modules` vs `.venv` vs `.pytest_cache`), не проверяет открытые порты `:3000`/`:8768` (`next-server`) и не распознаёт активные worktrees в `Orca.app`.
 3. По этой причине:
    - В [`mac-hygiene-digest`](../automation/bin/mac-hygiene-digest) используется чистый read-only вызов `find "$HOME/Projects" -maxdepth 3 -type d \( -name node_modules -o -name .venv -o -name venv -o -name target \) -exec du -sh {} +`.
-   - В [`_scan_dev_projects`](../src/mac_nexus/scanner.py#L1371-L1478) бэкенд `Mac Nexus` сканирует `~/Projects/*` **полностью на Python**: сравнивает `mtime` корня проекта и `.git/index` с параметром `older_days`, ищет директории из `PROJECT_ARTIFACT_NAMES` (`node_modules`, `.venv`, `venv`, `.pytest_cache`, `__pycache__`, `target`), считает размер с учётом `SF_DATALESS_FLAG` и сверяет каждый путь через `_find_project_lock` (`Orca` + `lsof` на `:3000,8768`).
+   - В [`_scan_dev_projects`](../src/mac_nexus/scanner.py#L1692-L1799) бэкенд `Mac Nexus` сканирует `~/Projects/*` **полностью на Python**: сравнивает `mtime` корня проекта и `.git/index` с параметром `older_days`, ищет директории из `PROJECT_ARTIFACT_NAMES` (`node_modules`, `.venv`, `venv`, `.pytest_cache`, `__pycache__`, `target`), считает размер с учётом `SF_DATALESS_FLAG` и сверяет каждый путь через `_find_project_lock` (`Orca` + `lsof` на `:3000,8768`).
    - В [`clean-approve`](../automation/bin/clean-approve) `kondo` вызывается **только интерактивно с порогом 30 дней**:
      ```zsh
      kondo -o 30d "$HOME/Projects"
@@ -188,7 +188,7 @@ flowchart LR
 ```zsh
 czkawka_cli dup -d <target> -s hash -t blake3 -m 1048576 -C <json> -e <exclusions>
 ```
-В установленной версии `czkawka_cli 12.0.2` метод поиска по умолчанию `-s` уже установлен в `HASH`, а тип хэша `-t` — в `BLAKE3`. В модуле [`scan_duplicates`](../src/mac_nexus/scanner.py#L1797-L1863) используется точная команда:
+В установленной версии `czkawka_cli 12.0.2` метод поиска по умолчанию `-s` уже установлен в `HASH`, а тип хэша `-t` — в `BLAKE3`. В модуле [`scan_duplicates`](../src/mac_nexus/scanner.py#L3169-L3234) используется точная команда:
 ```text
 /opt/homebrew/bin/czkawka_cli dup \
   -d <scan_dir> \
@@ -198,12 +198,12 @@ czkawka_cli dup -d <target> -s hash -t blake3 -m 1048576 -C <json> -e <exclusion
   -N -M -W \
   -e <excluded_dir_1> -e <excluded_dir_2> ...
 ```
-- **Разрешённые области (`target`):** `downloads` (`~/Downloads`), `desktop` (`~/Desktop`), `ssd_media` (`/Volumes/secret for mine/04_Media_Archive` при смонтированном SSD).
+- **Разрешённые области (`target`):** `downloads` (`~/Downloads`), `desktop` (`~/Desktop`), `documents` (`~/Documents`), `ssd_media` (`/Volumes/secret for mine/04_Media_Archive` при смонтированном SSD).
 - **Таблица ключевых флагов `czkawka_cli dup` (`12.0.2`):**
 
 | Флаг | Назначение | Параметр в Mac Nexus |
 | :--- | :--- | :--- |
-| `-d <DIR>` | Сканируемая директория (абсолютный путь) | Один из 3 allowlist-контуров (`downloads`, `desktop`, `ssd_media`) |
+| `-d <DIR>` | Сканируемая директория (абсолютный путь) | Один из 4 allowlist-контуров (`downloads`, `desktop`, `documents`, `ssd_media`) |
 | `-s <METHOD>` | Метод сравнения (`NAME`, `SIZE`, `SIZE_NAME`, `HASH`) | По умолчанию `HASH` (эквивалент `-s hash`) |
 | `-t <HASH_TYPE>` | Алгоритм хэширования (`BLAKE3`, `CRC32`, `XXH3`) | По умолчанию `BLAKE3` (криптостойкий и многопоточный) |
 | `-m <BYTES>` | Минимальный размер проверяемого файла (по умолчанию `8192`) | `-m 1048576` (`MIN_DUPLICATE_BYTES = 1 MiB`) |
@@ -212,12 +212,12 @@ czkawka_cli dup -d <target> -s hash -t blake3 -m 1048576 -C <json> -e <exclusion
 | `-e <DIR>` | Исключённые директории (быстрее `-E`, передаётся **по одной на флаг**) | Повторяющийся `-e` для каждой защищённой папки из `_collect_excluded_dirs` |
 | `-N -M -W` | Подавить stdout-таблицу (`-N`), лог-сообщения (`-M`) и exit code `11` при находках (`-W`) | Всегда включены; JSON читается из `-C` |
 
-- **Защита от пробелов в исключениях:** `_collect_excluded_dirs` находит все вложенные `.app`, `.photoslibrary`, `PROTECTED_DESKTOP_DIRS`, `SSD_LIVE_HEAVY_DIRS` и активные worktrees, после чего для каждого пути добавляется **отдельная пара аргументов** `["-e", ex_dir]` (покрыто тестом `test_duplicates_czkawka_parsing_and_trash_move` в [`test_mac_nexus.py`](../tests/test_mac_nexus.py#L689-L769)).
+- **Защита от пробелов в исключениях:** `_collect_excluded_dirs` находит все вложенные `.app`, `.photoslibrary`, `PROTECTED_DESKTOP_DIRS`, `SSD_LIVE_HEAVY_DIRS` и активные worktrees, после чего для каждого пути добавляется **отдельная пара аргументов** `["-e", ex_dir]` (покрыто тестом `test_duplicates_czkawka_parsing_and_trash_move` в [`test_mac_nexus.py`](../tests/test_mac_nexus.py#L755-L834)).
 - **Детерминированная защита оригинала и GUI-альтернатива (`Krokiet`):** `parse_czkawka_compact_json` отфильтровывает симлинки и `is_protected_path`, сортирует каждую группу по кортежу `(mtime_ts, len(str(path)), str(path))`, назначает самый ранний файл (`idx == 0`) оригиналом (**«ОРИГИНАЛ / СОХРАНИТЬ»**), а выбранные копии удаляет исключительно через `move_to_trash` в `~/.Trash`. Для ручного визуального поиска *похожих* фото/видео (perceptual matching) в поставке `czkawka` используйте Slint-интерфейс **Krokiet**, никогда не указывая ему `Photos Library.photoslibrary`.
 
 ### 2.4 Экосистемные прунеры и CLI-навигация
 
-В [`executor.py`](../src/mac_nexus/executor.py#L331-L366) и [`clean-approve`](../automation/bin/clean-approve) используются только штатные команды очистки пакетных менеджеров:
+В [`executor.py`](../src/mac_nexus/executor.py#L422-L469) и [`clean-approve`](../automation/bin/clean-approve) используются только штатные команды очистки пакетных менеджеров:
 
 | Инструмент | Команда очистки (Live) | Предпросмотр / Детектор | Особенности безопасности на Apple Silicon |
 | :--- | :--- | :--- | :--- |
@@ -228,6 +228,8 @@ czkawka_cli dup -d <target> -s hash -t blake3 -m 1048576 -C <json> -e <exclusion
 | **Conda** | `conda clean -y --all` | `conda clean --all --dry-run --json` | Очищает `.conda`/`.tar.bz2` архивы в `/opt/anaconda3/pkgs`, **сохраняя** `base Python 3.12.4` (критично для `AI Drama Studio.app`) |
 | **Hugging Face** | `hf cache prune` | `hf cache prune --dry-run` | В `huggingface_hub v1.0+` старая команда `huggingface-cli delete-cache` **удалена**! Используйте только `hf cache ls/prune/rm`, никогда не удаляя подпапки `blobs/` вручную через `rm` |
 | **NuGet (.NET)** | Очистка `~/.nuget/packages` и `NuGet/v3-cache` | Размер кэшей + `pgrep -fi rider` | Блокируется флагом `LIVE LOCK`, если запущена IDE `JetBrains Rider` |
+| **Go (`go`)** | `go clean -modcache` *(или `_clear_cache_dir_contents`)* | Размер `~/go/pkg/mod/cache/download` (`>= 10 MiB`) | Пересобираемый кэш скачанных Go-модулей (если `env.go_bin` не найден, очищается только каталог `download/`) |
+| **Cargo (Rust)** | `_clear_cache_dir_contents` для `~/.cargo/registry/cache` | Размер `~/.cargo/registry/cache` (`>= 10 MiB`) | Удаляет сжатые `.crate`-архивы, не затрагивая `bin/` и конфигурации Cargo |
 
 **Навигационные CLI-утилиты Стека 1 (работают в зонах без индексации Spotlight):**
 - `dust 1.2.7` (`dust -d 2 ~/Library`) — быстрая оценка тяжеловесных директорий в терминале;
@@ -259,12 +261,12 @@ czkawka_cli dup -d <target> -s hash -t blake3 -m 1048576 -C <json> -e <exclusion
 
 Браузеры (Chrome, Yandex) и Electron-приложения (VS Code, Obsidian, Orca, Discord, Notion, Figma, Telegram, draw.io, Яндекс Музыка) активно используют SQLite в режиме **Write-Ahead Logging** (`*.db` + `*-wal` + `*-shm`), а также движки `LevelDB` и `IndexedDB`. Удаление кэшей или воркеров на работающем приложении приводит к рассинхронизации WAL-фреймов (`SQLITE_CORRUPT`) и повреждению открытых профилей.
 
-В `Mac Nexus` проверка работает в два эшелона: при сборе кандидатов (`_scan_app_caches`) и **непосредственно перед исполнением** в [`_recheck_target_lock`](../src/mac_nexus/executor.py#L236-L267) (при нарушении возвращается `HTTP 409 LIVE LOCK`). Тот же список проверяется через `pgrep -x` в [`clean-approve`](../automation/bin/clean-approve) и [`clean-gui-caches`](../automation/bin/clean-gui-caches).
+В `Mac Nexus` проверка работает в два эшелона: при сборе кандидатов (`_scan_app_caches`) и **непосредственно перед исполнением** в [`_recheck_target_lock`](../src/mac_nexus/executor.py#L248-L295) (при нарушении возвращается `HTTP 409 LIVE LOCK`). Тот же список проверяется через `pgrep -x` в [`clean-approve`](../automation/bin/clean-approve) и [`clean-gui-caches`](../automation/bin/clean-gui-caches).
 
-**Полный перечень отслеживаемых процессов [`MONITORED_APPS`](../src/mac_nexus/scanner.py#L53-L65):**
+**Полный перечень отслеживаемых процессов [`MONITORED_APPS`](../src/mac_nexus/scanner.py#L170-L182):**
 `Google Chrome`, `Yandex`, `Telegram`, `Obsidian`, `Orca`, `Code`, `Discord`, `Notion`, `Figma`, `draw.io`, `Yandex Music` / `Яндекс Музыка` (дополнительно `pgrep -fi rider` блокирует очистку кэшей `NuGet`).
 
-**Точная граница допустимого ([`_expand_app_cache_dirs`](../src/mac_nexus/scanner.py#L755-L952)):**
+**Точная граница допустимого ([`_expand_app_cache_dirs`](../src/mac_nexus/scanner.py#L1027-L1233)):**
 
 | Приложение | Безопасный Allowlist (строго после `Cmd+Q`!) | Запрещённая Красная зона (НИКОГДА не удалять!) |
 | :--- | :--- | :--- |
@@ -280,40 +282,40 @@ czkawka_cli dup -d <target> -s hash -t blake3 -m 1048576 -C <json> -e <exclusion
 
 ### Правило 3 · Ловушки iCloud `fileproviderd` (`SF_DATALESS`) и внутренняя защита `~/.Trash`
 
-1. **Флаг `SF_DATALESS_FLAG` (`0x40000000`):** Облачные заглушки iCloud Drive в APFS выглядят как обычные файлы при вызове `stat().st_size` (на базовом аудите `com~apple~CloudDocs` показывал `17.91 GiB` логического объёма при реальных `84 KiB` на диске). В [`scanner.py`](../src/mac_nexus/scanner.py#L20) все подсчёты в `_dir_size_and_latest_mtime` и `_secondbrain_stats` проверяют `flags & SF_DATALESS_FLAG` и обходят дерево с `follow_symlinks=False`, чтобы исключить фантомные гигабайты и не провоцировать `fileproviderd` на массовую загрузку из облака.
+1. **Флаг `SF_DATALESS_FLAG` (`0x40000000`):** Облачные заглушки iCloud Drive в APFS выглядят как обычные файлы при вызове `stat().st_size` (на базовом аудите `com~apple~CloudDocs` показывал `17.91 GiB` логического объёма при реальных `84 KiB` на диске). В [`scanner.py`](../src/mac_nexus/scanner.py#L21) все подсчёты в `_dir_size_and_latest_mtime` и `_secondbrain_stats` проверяют `flags & SF_DATALESS_FLAG` и обходят дерево с `follow_symlinks=False`, чтобы исключить фантомные гигабайты и не провоцировать `fileproviderd` на массовую загрузку из облака.
 2. **Катастрофа `rm` по `SF_DATALESS`:** Удаление заглушки через `rm` / `unlink` интерпретируется `fileproviderd` как **удаление файла в iCloud и на всех ваших устройствах**. Для освобождения локального места надлежит использовать только *Удалить загрузку (Remove Download)* в Finder.
 3. **Запрет `.git`, `node_modules`, `.venv`, `.worktrees` и SQLite WAL внутри iCloud `SecondBrain`:** Десятки тысяч мелких файлов забивают SQLite-очередь `fileproviderd`, вызывая бесконечную загрузку CPU и конфликты версий (`index 2`, `HEAD 2`). В `Mac Nexus` путь `env.secondbrain_dir` полностью защищён в `is_protected_path`, а на Карточке 3 HUD контролируется индикатор `has_node_modules_risk`.
-4. **Дисциплина `~/.Trash` вместо `rm -rf`:** Путь `env.trash_dir` защищён от сканирования и повторного удаления (`_is_within(cand, env.trash_dir)` в [`scanner.py`](../src/mac_nexus/scanner.py#L233-L234)). Все пользовательские файлы (`downloads_inbox` и дубликаты `czkawka_cli`) никогда не удаляются напрямую — они переносятся через [`move_to_trash`](../src/mac_nexus/executor.py#L129-L156), где `_unique_dest_path` подбирает уникальное имя без перезаписи уже лежащих в Корзине файлов.
+4. **Дисциплина `~/.Trash` вместо `rm -rf`:** Путь `env.trash_dir` защищён от сканирования и повторного удаления (`_is_within(cand, env.trash_dir)` в [`scanner.py`](../src/mac_nexus/scanner.py#L413-L414)). Все пользовательские файлы (`downloads_inbox`, `app_orphans`, тяжёлые файлы Deep Radar и дубликаты `czkawka_cli`) никогда не удаляются вслепую мимо Корзины — они переносятся через [`move_to_trash`](../src/mac_nexus/executor.py#L141-L168), где `_unique_dest_path` подбирает уникальное имя без перезаписи уже лежащих в Корзине файлов (а необратимая очистка самого `~/.Trash` вынесена на отдельную вкладку `05 · КОРЗИНА` с containment guard `_verify_inside_trash`).
 
 ### Правило 4 · Аппаратный барьер `hdiutil` (`disk0..disk5` неприкосновенны)
 
 На хосте нижние номера дисковых устройств ядра заняты постоянными томами: `/dev/disk0` (физический NVMe), `/dev/disk3` (системный APFS-контейнер с `/`, `Data`, `VM`, `Preboot`, `Recovery`), `/dev/disk4`/`/dev/disk5` (внешний APFS SSD `/Volumes/secret for mine`). Примонтированные образы `.dmg` («призрачные» инсталляторы) получают номера `/dev/disk6` и выше.
 
 **Двойной аппаратный барьер в коде:**
-1. В [`_parse_hdiutil_images`](../src/mac_nexus/scanner.py#L461-L511) разбор `hdiutil info -plist` применяет маску `^(/dev/disk(\d+))(?:s\d+)?$`: любой образ с `disk_num < 6` **отбрасывается немедленно** (`whole_disk = None; break`).
+1. В [`_parse_hdiutil_images`](../src/mac_nexus/scanner.py#L711-L761) разбор `hdiutil info -plist` применяет маску `^(/dev/disk(\d+))(?:s\d+)?$`: любой образ с `disk_num < 6` **отбрасывается немедленно** (`whole_disk = None; break`).
 2. Для `disk >= 6` запускается проверка `lsof <mount_point>`: если образ используется открытым окном Finder или установщиком, он помечается `locked: true`.
-3. В [`_execute_single_target`](../src/mac_nexus/executor.py#L402-L410) перед вызовом `hdiutil detach` заново проверяется `re.fullmatch(r"/dev/disk(\d+)", dev)` и условие `int(m.group(1)) >= 6`.
+3. В [`_execute_single_target`](../src/mac_nexus/executor.py#L514-L522) перед вызовом `hdiutil detach` заново проверяется `re.fullmatch(r"/dev/disk(\d+)", dev)` и условие `int(m.group(1)) >= 6`.
 
 ### Правило 5 · Защищённые бандлы Desktop, живые боты, `OrbStack` и `Orca` worktrees
 
-В [`scanner.py`](../src/mac_nexus/scanner.py#L38-L50) и [`is_protected_path`](../src/mac_nexus/scanner.py#L219-L253) заложены абсолютные исключения, гарантирующие неприкосновенность рабочих сред:
+В [`scanner.py`](../src/mac_nexus/scanner.py#L155-L167) и [`is_protected_path`](../src/mac_nexus/scanner.py#L399-L433) заложены абсолютные исключения, гарантирующие неприкосновенность рабочих сред:
 - **`PROTECTED_BUNDLE_SUFFIXES = (".app", ".photoslibrary")`:** Защищает все `.app`-лаунчеры на `~/Desktop` и медиатеку `Photos Library.photoslibrary` от любых операций сканирования, телепорта и дедупликации (прямое вмешательство в `.photoslibrary` разрушает SQLite-каталог и хардлинки Apple Photos).
 - **`PROTECTED_DESKTOP_DIRS = ("Бот_автооткликов_Егор", "GPT_подключение_для_бота")`:** Каталоги живых ботов на Рабочем столе исключены на всех этапах (`_scan_downloads_inbox`, `_scan_offload_media`, `_collect_excluded_dirs`, `move_to_trash`).
-- **Активные `Orca` worktrees и живые серверы:** [`detect_live_locks`](../src/mac_nexus/scanner.py#L358-L441) опрашивает `/Applications/Orca.app/Contents/Resources/bin/orca worktree ps --limit 30 --json` (с текстовым фоллбэком `parse_orca_worktrees_text`) и `lsof -nP -iTCP:3000,8768 -sTCP:LISTEN` (привязка по `cwd` запущенных процессов вроде `next-server`). Любой активный worktree или проект с живым процессом защищён от очистки артефактов.
+- **Активные `Orca` worktrees и живые серверы:** [`detect_live_locks`](../src/mac_nexus/scanner.py#L608-L691) опрашивает `/Applications/Orca.app/Contents/Resources/bin/orca worktree ps --limit 30 --json` (с текстовым фоллбэком `parse_orca_worktrees_text`) и `lsof -nP -iTCP:3000,8768 -sTCP:LISTEN` (привязка по `cwd` запущенных процессов вроде `next-server`). Любой активный worktree или проект с живым процессом защищён от очистки артефактов.
 - **Корневые живые директории SSD (`SSD_LIVE_HEAVY_DIRS`):** `ollama_models`, `local-jarvis-heavy`, `project-perimeter-heavy`, `calisthenics-tracker-heavy` на `/Volumes/secret for mine` полностью защищены `is_protected_path`.
-- **Контроль `OrbStack` и `Aerials`:** `OrbStack` хранит диск VM как APFS sparse-файл (`data.img.raw` с логическим размером `~228 GiB` при реальном расходе ~`11.7 GiB`) — его нельзя копировать без sparse-поддержки или сжимать вслепую; очистка делается только штатно через `docker system prune -a --volumes` при запущенном OrbStack. Заставки `~/Library/Application Support/com.apple.wallpaper/aerials/videos` удаляются только после переключения обоев на статичное изображение (иначе `idleassetsd` скачает их повторно).
-- **Атомарность телепорта `SHA-256`:** Функция [`teleport_file_sha256`](../src/mac_nexus/executor.py#L171-L233) перед удалением оригинала на NVMe проверяет `ssd_is_mounted(env)`, копирует во временный `.nexus.tmp`, вызывает `os.fsync()`, сверяет **байтовый размер И криптографический хэш `SHA-256`** источника и приёмника, и лишь после `os.replace()` удаляет исходный файл.
+- **Контроль `OrbStack` и `Aerials`:** `OrbStack` хранит диск VM как APFS sparse-файл (`data.img.raw` с логическим размером `~228 GiB` при реальном расходе ~`11.7 GiB`) — его нельзя копировать без sparse-поддержки или сжимать вслепую; в Deep Radar он отображается как неразрушаемый `hotspot`, а неиспользуемые образы и build cache безопасно сбрасываются штатно через `docker image/builder prune -f`. Заставки `~/Library/Application Support/com.apple.wallpaper/aerials/videos` удаляются в Корзину только при явном выборе цели в `system_cache` (если оставить динамические обои активными, `idleassetsd` скачает их повторно).
+- **Атомарность телепорта `SHA-256`:** Функция [`teleport_file_sha256`](../src/mac_nexus/executor.py#L183-L245) перед удалением оригинала на NVMe проверяет `ssd_is_mounted(env)`, копирует во временный `.nexus.tmp`, вызывает `os.fsync()`, сверяет **байтовый размер И криптографический хэш `SHA-256`** источника и приёмника, и лишь после `os.replace()` удаляет исходный файл.
 
 ### 3.1 Сводная матрица барьеров безопасности
 
 | Красная зона | Потенциальная угроза | Механизм защиты | Реализация в коде / скриптах |
 | :--- | :--- | :--- | :--- |
 | Universal `.app` на `arm64` | Поломка Developer ID / Notarization / `Team ID` через `lipo` | Запрет `App Lipo` и `mo slim` | Регламент Стека 1 (`Pearcleaner` Lipo OFF) |
-| Работающие Electron / Browser | Повреждение `SQLite WAL` (`*-wal`/`*-shm`), `LevelDB`, `IndexedDB` | `pgrep -x` + `LIVE LOCK` (`HTTP 409`) + allowlist кэшей | [`MONITORED_APPS`](../src/mac_nexus/scanner.py#L53-L65), [`_recheck_target_lock`](../src/mac_nexus/executor.py#L236-L267), [`clean-gui-caches`](../automation/bin/clean-gui-caches) |
-| iCloud Drive & `SecondBrain` | Облачное удаление через `rm` на `SF_DATALESS`; крах `fileproviderd` | Проверка `SF_DATALESS_FLAG`, исключение `secondbrain_dir` | [`SF_DATALESS_FLAG`](../src/mac_nexus/scanner.py#L20), [`is_protected_path`](../src/mac_nexus/scanner.py#L219-L253) |
-| Системные и внешние диски | Отмонтирование NVMe / SSD вместо DMG | Жёсткий фильтр `disk_num >= 6` + `lsof` проверка | [`_parse_hdiutil_images`](../src/mac_nexus/scanner.py#L461-L511), [`_execute_single_target`](../src/mac_nexus/executor.py#L402-L410) |
-| Рабочие проекты и Desktop-боты | Снос `.venv`/`node_modules` активных worktrees или ботов | Возраст в Python (`older_days`), `orca worktree ps`, `PROTECTED_DESKTOP_DIRS` | [`_scan_dev_projects`](../src/mac_nexus/scanner.py#L1371-L1478), [`detect_live_locks`](../src/mac_nexus/scanner.py#L358-L441) |
-| Медиа-телепорт и дубликаты | Потеря файла при обрыве USB или коллизии имён | `ismount` + `fsync` + `SHA-256` паритет; `move_to_trash` | [`teleport_file_sha256`](../src/mac_nexus/executor.py#L171-L233), [`move_to_trash`](../src/mac_nexus/executor.py#L129-L156) |
+| Работающие Electron / Browser | Повреждение `SQLite WAL` (`*-wal`/`*-shm`), `LevelDB`, `IndexedDB` | `pgrep -x` + `LIVE LOCK` (`HTTP 409`) + allowlist кэшей | [`MONITORED_APPS`](../src/mac_nexus/scanner.py#L170-L182), [`_recheck_target_lock`](../src/mac_nexus/executor.py#L248-L295), [`clean-gui-caches`](../automation/bin/clean-gui-caches) |
+| iCloud Drive & `SecondBrain` | Облачное удаление через `rm` на `SF_DATALESS`; крах `fileproviderd` | Проверка `SF_DATALESS_FLAG`, исключение `secondbrain_dir` | [`SF_DATALESS_FLAG`](../src/mac_nexus/scanner.py#L21), [`is_protected_path`](../src/mac_nexus/scanner.py#L399-L433) |
+| Системные и внешние диски | Отмонтирование NVMe / SSD вместо DMG | Жёсткий фильтр `disk_num >= 6` + `lsof` проверка | [`_parse_hdiutil_images`](../src/mac_nexus/scanner.py#L711-L761), [`_execute_single_target`](../src/mac_nexus/executor.py#L514-L522) |
+| Рабочие проекты и Desktop-боты | Снос `.venv`/`node_modules` активных worktrees или ботов | Возраст в Python (`older_days`), `orca worktree ps`, `PROTECTED_DESKTOP_DIRS` | [`_scan_dev_projects`](../src/mac_nexus/scanner.py#L1692-L1799), [`detect_live_locks`](../src/mac_nexus/scanner.py#L608-L691) |
+| Медиа-телепорт и дубликаты | Потеря файла при обрыве USB или коллизии имён | `ismount` + `fsync` + `SHA-256` паритет; `move_to_trash` | [`teleport_file_sha256`](../src/mac_nexus/executor.py#L183-L245), [`move_to_trash`](../src/mac_nexus/executor.py#L141-L168) |
 
 ### 3.2 Команды форензик-проверки Красной зоны (Read-Only)
 

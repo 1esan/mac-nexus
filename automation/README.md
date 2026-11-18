@@ -17,7 +17,7 @@ flowchart LR
     LA_DIGEST["LaunchAgent (com.egor.mac-hygiene-digest.plist, Вс 11:00)"] -->|"Запускает read-only"| DIGEST["mac-hygiene-digest"]
     DIGEST -->|"Атомарная запись через .tmp.$$"| MD["~/.local/state/mac-hygiene/digest_latest.md"]
     DIGEST -->|"osascript notification"| NOTIFY["Уведомление macOS"]
-    MD -->|"Чтение в Terminal или HUD Tab 04"| USER["Оператор (Review)"]
+    MD -->|"Чтение в Terminal или HUD Tab 06"| USER["Оператор (Review)"]
     USER -->|"Подтверждение [y/N]"| APPROVE["clean-approve"]
     USER -->|"Только при закрытых GUI-приложениях"| CACHES["clean-gui-caches"]
     APPROVE -->|"organize check && organize run"| ORG["organize (config.yaml)"]
@@ -203,7 +203,7 @@ ls -lh "$HOME/.local/state/mac-hygiene/digest_latest.md"
 head -n 40 "$HOME/.local/state/mac-hygiene/digest_latest.md"
 ```
 
-После запуска дайджест также доступен прямо в графическом окне **Mac Nexus Cyber-HUD** во вкладке `04 · ПУЛЬТ КОНТУРОВ` по кнопке **«Открыть Воскресный дайджест»** (`POST /api/open-tool` с `{"tool": "digest"}`).
+После запуска дайджест также доступен прямо в графическом окне **Mac Nexus Cyber-HUD** во вкладке `06 · ПУЛЬТ КОНТУРОВ` по кнопке **«Открыть Воскресный дайджест»** (`POST /api/open-tool` с `{"tool": "digest"}`).
 
 ---
 

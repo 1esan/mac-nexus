@@ -155,7 +155,7 @@ sequenceDiagram
 ### 2.2 `HTTP 403 Forbidden` (ошибка CSRF-заголовка, `Origin` или статического пути)
 
 - **Симптом:** `POST /api/*` возвращает статус `403` с телом `{"ok": false, "error": "Forbidden: missing X-Mac-Nexus-Client header"}` или `{"ok": false, "error": "Forbidden: invalid Origin"}`, либо запрос `/static/...` получает `403`.
-- **Причина:** В [`_check_post_csrf`](../src/mac_nexus/server.py#L125-L142) и [`_is_valid_origin`](../src/mac_nexus/server.py#L61-L67) сработала защита от CSRF / подделки домена:
+- **Причина:** В [`_check_post_csrf`](../src/mac_nexus/server.py#L141-L158) и [`_is_valid_origin`](../src/mac_nexus/server.py#L67-L73) сработала защита от CSRF / подделки домена:
   1. Отсутствует или не равен `"1"` заголовок `X-Mac-Nexus-Client`.
   2. Передан заголовок `Origin`, чей `scheme != "http"` или `hostname` не входит строго в `{"127.0.0.1", "localhost"}` (включая спуфинг вида `http://127.0.0.1.evil.com:8790` или `http://0.0.0.0:8790`).
   3. Для `GET /static/*` передана попытка выхода из каталога (`..`, `/`, `\`) или расширение не входит в `ALLOWED_STATIC_MIME`.
@@ -175,7 +175,7 @@ sequenceDiagram
 ### 2.3 `HTTP 409 Conflict: LIVE LOCK` (блокировка приложения, worktree или порта)
 
 - **Симптом:** В Cyber-HUD карточка помечена оранжевым бейджем `LIVE LOCK` (чекбокс заблокирован), либо прямой `POST /api/execute` возвращает `HTTP 409` с ошибкой `LIVE LOCK: ...`.
-- **Причина:** [`detect_live_locks`](../src/mac_nexus/scanner.py#L358-L441) или предвыполнимая перепроверка [`_recheck_target_lock`](../src/mac_nexus/executor.py#L236-L267) обнаружила:
+- **Причина:** [`detect_live_locks`](../src/mac_nexus/scanner.py#L608-L691) или предвыполнимая перепроверка [`_recheck_target_lock`](../src/mac_nexus/executor.py#L248-L295) обнаружила:
   - запущенное приложение из `MONITORED_APPS` (`pgrep -x`) или `rider` (`pgrep -fi rider` для NuGet);
   - активный worktree в `orca worktree ps --limit 30 --json` (или текстовом фоллбэке);
   - слушающий сервис на портах `3000` или `8768` с `cwd` внутри проекта (`lsof -nP -iTCP:3000,8768 -sTCP:LISTEN`);
@@ -198,7 +198,7 @@ sequenceDiagram
 
 ### 2.4 Внешний SSD `/Volumes/secret for mine` не смонтирован
 
-- **Симптом:** На орбитальном реакторе Контура 2 отображается `OFF` / `НЕ ПОДКЛЮЧЁН`, во вкладке `ТЕЛЕПОРТ НА SSD` горит янтарный баннер `#ssd-unmounted-alert`, кнопка **«ТЕЛЕПОРТИРОВАТЬ НА SSD (SHA-256)»** неактивна в боевом режиме, а вызов `POST /api/offload` (`dry_run: false`), `POST /api/duplicates` (`target: "ssd_media"`) или `POST /api/open-tool` (`tool: "finder_ssd"`) возвращает **`HTTP 409`** (`"Внешний SSD /Volumes/secret for mine не смонтирован"`).
+- **Симптом:** На орбитальном реакторе Контура 2 отображается `OFF` / `НЕ ПОДКЛЮЧЁН`, во вкладке `03 · ТЕЛЕПОРТ МЕДИА` горит янтарный баннер `#ssd-unmounted-alert`, кнопка **«ТЕЛЕПОРТИРОВАТЬ НА SSD (SHA-256)»** неактивна в боевом режиме, а вызов `POST /api/offload` (`dry_run: false`), `POST /api/radar-action` (`action: "teleport_ssd"`, `dry_run: false`), `POST /api/duplicates` (`target: "ssd_media"`) или `POST /api/open-tool` (`tool: "finder_ssd"`) возвращает **`HTTP 409`** (`"Внешний SSD /Volumes/secret for mine не смонтирован"`).
 - **Причина:** Физический накопитель отключён, не размонтировался корректно после сна, либо сторонняя утилита успела создать пустую фантомную папку `/Volumes/secret for mine` на внутреннем диске, из-за чего macOS смонтировала реальный SSD по пути `/Volumes/secret for mine 1`.
 - **Команда диагностики:**
   ```zsh
@@ -221,7 +221,7 @@ sequenceDiagram
 ### 2.5 Устаревшие идентификаторы `ScanSnapshot` (`HTTP 400 UnknownTargetError`)
 
 - **Симптом:** Запрос к `POST /api/execute`, `POST /api/offload` или `POST /api/trash-duplicates` возвращает `HTTP 400` с ошибкой вида `"Неизвестный или устаревший идентификатор: ..."`, `"Неизвестный media_id: ..."` или `"Неизвестный file_id дубликата: ..."`.
-- **Причина:** Реестр разрешённых целей [`ScanSnapshot`](../src/mac_nexus/scanner.py#L156-L161) (`items_by_id`, `offload_by_id`, `dup_files_by_id`) хранится **в оперативной памяти** запущенного процесса сервера ([`NexusAppContext`](../src/mac_nexus/server.py#L48-L58)) и никогда не принимает произвольные пути от клиента. При перезапуске сервера или при отправке ID дубликата, уже удалённого ранее (`pop` в `trash_duplicate_files`), ID отсутствует в активном snapshot.
+- **Причина:** Реестр разрешённых целей [`ScanSnapshot`](../src/mac_nexus/scanner.py#L334-L341) (`items_by_id`, `offload_by_id`, `dup_files_by_id`, `radar_by_id`, `trash_by_id`) хранится **в оперативной памяти** запущенного процесса сервера ([`NexusAppContext`](../src/mac_nexus/server.py#L54-L64)) и никогда не принимает произвольные пути от клиента. При перезапуске сервера или при отправке ID дубликата/корзины, уже удалённого ранее (`pop` в `trash_duplicate_files` или `purge_trash_items`), ID отсутствует в активном snapshot.
 - **Команда диагностики:**
   ```zsh
   curl -fsS http://127.0.0.1:8790/api/health
@@ -237,7 +237,7 @@ sequenceDiagram
 ### 2.6 `czkawka_cli` не найден или завершился с ошибкой
 
 - **Симптом:** Во вкладке `ДУБЛИКАТЫ` появляется ошибка (или `POST /api/duplicates` возвращает **`HTTP 409`** с сообщением `czkawka_cli завершился с ошибкой: ...` / `No such file or directory`).
-- **Причина:** Бинарник [`env.czkawka_bin`](../src/mac_nexus/scanner.py#L92) (`/opt/homebrew/bin/czkawka_cli`) не установлен, повреждён, заблокирован Gatekeeper после ручного скачивания, либо передан некорректный/отмонтированный путь (`ssd_media`).
+- **Причина:** Бинарник [`env.czkawka_bin`](../src/mac_nexus/scanner.py#L209) (`/opt/homebrew/bin/czkawka_cli`) не установлен, повреждён, заблокирован Gatekeeper после ручного скачивания, либо передан некорректный/отмонтированный путь (`ssd_media`).
 - **Команда диагностики:**
   ```zsh
   ls -la /opt/homebrew/bin/czkawka_cli
@@ -293,7 +293,7 @@ sequenceDiagram
 ### 2.8 Быстрая шпаргалка по ошибкам правил `organize` и SSE-соединения
 
 - **Ошибка в `~/.config/organize/config.yaml`:** Проверьте схему командой `organize check` (без модификации диска!). Наиболее частые опечатки: использование несуществующего параметра `conflict_mode` вместо `on_conflict` или пропуск отступа в `python:` фильтре SSD-guard.
-- **Переподключение `SSE: ПЕРЕПОДКЛЮЧЕНИЕ` в HUD:** В [`server.py`](../src/mac_nexus/server.py#L215-L240) сервер шлёт keepalive-комментарий `: keepalive\n\n` каждые `15.0` секунд. Если ноутбук выходил из сна и сокет закрылся, браузерный `EventSource` переподключается автоматически; при зависании просто нажмите **«ОБНОВИТЬ»** (`btn-refresh-all`) или перезагрузите страницу (`Cmd+R`).
+- **Переподключение `SSE: ПЕРЕПОДКЛЮЧЕНИЕ` в HUD:** В [`server.py`](../src/mac_nexus/server.py#L250-L274) сервер шлёт keepalive-комментарий `: keepalive\n\n` каждые `15.0` секунд. Если ноутбук выходил из сна и сокет закрылся, браузерный `EventSource` переподключается автоматически; при зависании просто нажмите **«ОБНОВИТЬ»** (`btn-refresh-all`) или перезагрузите страницу (`Cmd+R`).
 
 ---
 

@@ -124,12 +124,12 @@ flowchart TB
    - Установщики `INSTALLER_EXTENSIONS` (`{".dmg", ".pkg", ".exe", ".iso"}`) старше `7` дней → безопасное перемещение в `~/.Trash` (`action_kind: "trash"`).
    - Скриншоты с префиксами `SCREENSHOT_PREFIXES` (`("Screenshot", "Screen Shot", "Снимок экрана")`, расширения `{".png", ".jpg", ".jpeg"}`) старше `14` дней в `~/Downloads` (`max_depth: 2`) и `~/Desktop` (`max_depth: 1`) → `~/.Trash`.
    - Нетронутые файлы старше `older_days` (по умолчанию `30` дней) → передаются в `organize` для разметки тегом `review-delete (red)` без удаления.
-3. **Защищённый `~/Desktop` и живые боты:** на Рабочем столе находятся лаунчеры `.app` (включая `Mac Nexus.app`, `AI Drama Studio.app`, `GigaAM Studio.app`, `Сеньор Помидор.app` и др.) и две директории живых ботов, прописанные в `PROTECTED_DESKTOP_DIRS` в [`scanner.py`](../src/mac_nexus/scanner.py#L45-L48):
+3. **Защищённые зоны `~/Desktop` и живые боты:** на Рабочем столе находятся лаунчеры `.app` (включая `Mac Nexus.app`, `AI Drama Studio.app`, `GigaAM Studio.app`, `Сеньор Помидор.app` и др.) и две директории живых ботов, прописанные в `PROTECTED_DESKTOP_DIRS` в [`scanner.py`](../src/mac_nexus/scanner.py#L162-L165):
    - `Бот_автооткликов_Егор`
    - `GPT_подключение_для_бота`
    Функция `is_protected_path()` гарантирует, что ни сканер очистки, ни перенос медиа, ни `czkawka_cli` (`-e`), ни `move_to_trash()` никогда не затронут `.app`-бандлы (`PROTECTED_BUNDLE_SUFFIXES = (".app", ".photoslibrary")`) и директории активных ботов.
 4. **`UV_CACHE_DIR` строго на внутреннем APFS:** кэш `uv` хранится в `~/.cache/uv` (на том же томе `disk3s5`, что и `~/Projects/*/.venv`), чтобы работал мгновенный `clonefile(2)` без кросс-томного копирования `EXDEV`. Подробнее — в [02 · APFS, XDG и macOS-внутренности](02_macos_apfs_xdg_and_env_internals.md).
-5. **Операционные правила для `/Applications` и системных кэшей:** `Mac Nexus` не сносит программы сам, а контролирует примонтированные призрачные образы `.dmg` (только устройства `/dev/diskN` с `N >= 6`, никогда `disk0..disk5`), безопасные кэши пакетных менеджеров (`brew`, `pip`, `uv`, `npm`, `nuget`, `conda clean`) и allowlist-кэши закрытых GUI-приложений.
+5. **Операционные правила для `/Applications` и системных кэшей:** `Mac Nexus` не сносит программы сам, а контролирует примонтированные призрачные образы `.dmg` (только устройства `/dev/diskN` с `N >= 6`, никогда `disk0..disk5`), безопасные кэши пакетных менеджеров (`brew`, `pip`, `uv`, `npm`, `nuget`, `go`, `cargo`, `conda clean`) и allowlist-кэши GUI-приложений (включая `Smart Close` для разрешённых программ).
 
 ---
 
@@ -141,7 +141,7 @@ flowchart TB
 
 #### 6 канонических полок (`SSD_SHELVES`) и защита `SSD_LIVE_HEAVY_DIRS`
 
-В [`scanner.py`](../src/mac_nexus/scanner.py#L29-L43) структура Контура 2 закреплена двумя константами:
+В [`scanner.py`](../src/mac_nexus/scanner.py#L146-L160) структура Контура 2 закреплена двумя константами:
 
 ```python
 SSD_SHELVES = (
@@ -168,10 +168,10 @@ SSD_LIVE_HEAVY_DIRS = {
    - `02_Project_Heavy/calisthenics-tracker -> ../calisthenics-tracker-heavy`
    - `02_Project_Heavy/local-jarvis -> ../local-jarvis-heavy`
    - `02_Project_Heavy/zombie-base-defense -> ../project-perimeter-heavy`
-   При этом `is_protected_path()` в [`scanner.py`](../src/mac_nexus/scanner.py#L243-L245) запрещает любые автоматические мутации внутри `SSD_LIVE_HEAVY_DIRS`.
+   При этом `is_protected_path()` в [`scanner.py`](../src/mac_nexus/scanner.py#L423-L425) запрещает любые автоматические мутации внутри `SSD_LIVE_HEAVY_DIRS`.
 3. **`03_Software_and_Installers/`** — **исключительно** редкие офлайн-дистрибутивы и образы ОС, которые невозможно перекачать из сети или Homebrew. Рядовые `.dmg`/`.pkg` после установки подлежат удалению в Корзину.
 4. **`04_Media_Archive/`** — целевая полка для тяжёлых записей экрана, видеомонтажа и экспортов:
-   - Подкаталог `Screen_Recordings/<YYYY-MM>/` используется движком **SHA-256 телепорта** (`teleport_file_sha256()` в [`executor.py`](../src/mac_nexus/executor.py#L171-L233)) для безопасного выноса `.mov`, `.mp4`, `.mkv` размером `> 10 MiB` (`MIN_OFFLOAD_BYTES`) с `~/Desktop` и `~/Downloads`.
+   - Подкаталог `Screen_Recordings/<YYYY-MM>/` используется движком **SHA-256 телепорта** (`teleport_file_sha256()` в [`executor.py`](../src/mac_nexus/executor.py#L183-L245)) для безопасного выноса `.mov`, `.mp4`, `.mkv` размером `> 10 MiB` (`MIN_OFFLOAD_BYTES`) с `~/Desktop` и `~/Downloads`.
    - Правило #4 в [`automation/organize/config.yaml`](../automation/organize/config.yaml) также переносит сюда медиа/архивы `> 100 MB` и старше `14` дней (`on_conflict: "rename_new"`) при условии явной проверки монтирования `os.path.ismount("/Volumes/secret for mine")`.
 5. **`90_Cold_Archive/`** — холодные неизменяемые архивы прошлых лет (`Legacy_Archive`), архивный снэпшот старого локального заглушечного каталога `home_SecondBrain_stub_20261118`, тяжёлые вынесенные `.png`/`.apkg`.
 6. **`99_Backups/`** — структурированные локальные бэкапы (в частности, объединённый `hermes/`, куда собраны `Hermes_Backups_Root`, `Archive_Hermes_Backups`, `internal_state_snapshots_*` и `internal_backups_*`). **Важно:** хранение бэкапа на том же рабочем внешнем SSD не является стратегией `3-2-1` — отказ или потеря диска уничтожит и архив, и рабочий том.
@@ -211,7 +211,7 @@ heavy_vault: "file:///Volumes/secret for mine/02_Project_Heavy/ai-drama-studio"
 ---
 ```
 
-А `Mac Nexus` в `_secondbrain_stats()` ([`scanner.py`](../src/mac_nexus/scanner.py#L579-L627)) непрерывно контролирует здоровье Контура 3: считает число `.md`-заметок (`md_notes_count`), суммирует только локально присутствующие файлы (игнорируя `SF_DATALESS_FLAG` и `.git`) и мгновенно сигнализирует в Cyber-HUD флагом `has_node_modules_risk`, если кто-то случайно установил пакеты внутрь iCloud.
+А `Mac Nexus` в `_secondbrain_stats()` ([`scanner.py`](../src/mac_nexus/scanner.py#L829-L877)) непрерывно контролирует здоровье Контура 3: считает число `.md`-заметок (`md_notes_count`), суммирует только локально присутствующие файлы (игнорируя `SF_DATALESS_FLAG` и `.git`) и мгновенно сигнализирует в Cyber-HUD флагом `has_node_modules_risk`, если кто-то случайно установил пакеты внутрь iCloud.
 
 ---
 
@@ -321,7 +321,7 @@ CLI-утилита `tag` (`/opt/homebrew/bin/tag`, `v0.10.0`), правила [`
    - Одноразовый установщик (`.dmg`, `.pkg`, `.zip`) → установить приложение, размонтировать образ (`hdiutil detach`), удалить установщик.
    - Постоянный документ (договор, счёт, справка) → сразу переименовать по шаблону `<YYYY-MM-DD>__<slug>.<ext>` и убрать в `~/Documents` или `90_Cold_Archive/`.
    - Всё, что требует изучения дольше 2 минут, остаётся в `~/Downloads` с оранжевым тегом `inbox`.
-2. **Еженедельный разбор (воскресенье, вместе с дайджестом):** просмотреть `Inbox_Stale_7d.savedSearch` / `Review_Delete.savedSearch`, выгрузить тяжёлые записи экрана в `Mac Nexus` (вкладка `ТЕЛЕПОРТ НА SSD`) и обнулить `~/Downloads`.
+2. **Еженедельный разбор (воскресенье, вместе с дайджестом):** просмотреть `Inbox_Stale_7d.savedSearch` / `Review_Delete.savedSearch`, выгрузить тяжёлые записи экрана в `Mac Nexus` (вкладка `03 · ТЕЛЕПОРТ МЕДИА`) и обнулить `~/Downloads`.
 
 ---
 
