@@ -39,6 +39,7 @@ Before modifying any subsystem, start from the canonical documentation rather th
    - Dynamically inspect running GUI/background processes (`pgrep -x`: `Google Chrome`, `Yandex`, `Telegram`, `Obsidian`, `Orca`, `Code`, `Discord`, `Notion`, `Figma`, `draw.io`, `Yandex Music` / `Яндекс Музыка`; plus `pgrep -fi rider` for NuGet), active Orca worktrees (`orca worktree ps --limit 30 --json` with text fallback), live service PIDs (`lsof` listening on `:3000`, `:8768`), and open files on DMG mount points.
    - If a target belongs to an active process or live worktree, mark `locked: true` with a descriptive `lock_reason`, disable selection in the UI, and reject backend execution with `HTTP 409`.
    - Never detach `disk0..disk5` (`_parse_hdiutil_images` allows `disk >= 6` only).
+   - **Smart Close HARD prohibition:** `POST /api/smart-close-clean` is **unconditionally forbidden** for `app_key in {"orca", "vscode"}` — no `dry_run` bypass, always returns `HTTP 409`. This prevents auto-quitting `Orca.app` or VS Code and destroying active worktrees or open editors.
 
 4. **Protected Zones & Trash-Instead-of-`rm` Discipline**
    - `is_protected_path()` MUST always block `.app` / `.photoslibrary` bundles, `~/.Trash` internals, `PROTECTED_DESKTOP_DIRS`, `secondbrain_dir`, `SSD_LIVE_HEAVY_DIRS`, and active `Orca` worktrees from scan, deletion, or offload.
@@ -64,14 +65,20 @@ Before modifying any subsystem, start from the canonical documentation rather th
 Full request/response schemas and `curl` examples: [`docs/05_http_rest_and_sse_api_reference.md`](docs/05_http_rest_and_sse_api_reference.md).
 - `GET /`, `GET /static/<filename>`
 - `GET /api/health`
-- `GET /api/telemetry`
-- `GET /api/scan?older_days=30`
+- `GET /api/telemetry` (includes `"trash"` block: `tcc_restricted`, `total_bytes`, `item_count`)
+- `GET /api/scan?older_days=30` (categories: `system_cache`, `app_orphans`, `ai_dev_deep`, `app_cache`, `pkg_cache`, `downloads_inbox`, `dev_projects`, `ghost_dmgs`)
+- `GET /api/deep-radar?min_mb=50` -> `{ok, items: RadarTarget[]}`)
+- `GET /api/trash` -> `{ok, tcc_restricted, items: TrashEntryTarget[]}`)
 - `GET /api/events` (`text/event-stream`)
 - `POST /api/execute` (`{item_ids, dry_run}` -> `{ok, job_id}`)
 - `POST /api/offload` (`{media_ids, dry_run}` -> `{ok, job_id}`)
-- `POST /api/duplicates` (`{target}` -> `{ok, groups, total_wasted_bytes}`)
+- `POST /api/smart-close-clean` (`{item_id, reopen, dry_run}` -> `{ok, job_id}`; **HARD FORBIDDEN** for `Orca` and `VS Code`)
+- `POST /api/radar-action` (`{radar_ids, action, shelf, dry_run}` -> `{ok, job_id}`; `action`: `"trash"|"teleport_ssd"`)
+- `POST /api/radar-reveal` (`{radar_id}` -> `{ok}`)
+- `POST /api/empty-trash` (`{mode, trash_ids?, older_days?, dry_run}` -> `{ok, job_id}`; `mode`: `"selected"|"older_than"|"finder_empty"`)
+- `POST /api/duplicates` (`{target}` -> `{ok, groups, total_wasted_bytes}`; `target` now includes `"documents"`)
 - `POST /api/trash-duplicates` (`{file_ids}` -> `{ok, trashed_count, reclaimed_bytes}`)
-- `POST /api/open-tool` (`{tool}` -> `{ok, content?}`)
+- `POST /api/open-tool` (`{tool}` -> `{ok, content?}`; allowlist includes `"finder_trash"`)
 
 ---
 

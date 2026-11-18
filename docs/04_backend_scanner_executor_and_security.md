@@ -2,7 +2,7 @@
 
 # 04 · Backend, Scanner, Executor и Модель Безопасности
 
-Данный документ описывает внутреннюю архитектуру Python-бэкенда **Mac Nexus** (`mac_nexus` `v1.0.0`): структуру модулей, состояние сервера, механизмы сканирования трёх контуров хранения, многоуровневую модель безопасности, движок `LIVE LOCK` и транзакционный исполнитель операций очистки, телепорта на SSD и перемещения в Корзину.
+Данный документ описывает внутреннюю архитектуру Python-бэкенда **Mac Nexus** (`mac_nexus` `v2.0.0`): структуру модулей, состояние сервера, механизмы сканирования трёх контуров хранения, многоуровневую модель безопасности, движок `LIVE LOCK` и транзакционный исполнитель операций очистки, телепорта на SSD и перемещения в Корзину.
 
 Все факты, имена символов, пороги и инварианты в этом справочнике сверены с исходным кодом [`__init__.py`](../src/mac_nexus/__init__.py), [`server.py`](../src/mac_nexus/server.py), [`scanner.py`](../src/mac_nexus/scanner.py), [`executor.py`](../src/mac_nexus/executor.py) и набором тестов [`test_mac_nexus.py`](../tests/test_mac_nexus.py).
 
@@ -16,10 +16,10 @@
 
 | Модуль | Версия / Метаданные | Назначение | Ключевые классы и функции |
 | :--- | :--- | :--- | :--- |
-| [`__init__.py`](../src/mac_nexus/__init__.py) | `APP_NAME = "Mac Nexus"`, `APP_VERSION = "1.0.0"` | Метаданные пакета | `__all__ = ["APP_NAME", "APP_VERSION"]` |
+| [`__init__.py`](../src/mac_nexus/__init__.py) | `APP_NAME = "Mac Nexus"`, `APP_VERSION = "2.0.0"` | Метаданные пакета | `__all__ = ["APP_NAME", "APP_VERSION"]` |
 | [`server.py`](../src/mac_nexus/server.py) | `HTTP/1.1` + SSE | Loopback HTTP-сервер, CSRF/Origin-фильтр, раздача `/static/*`, REST и SSE маршруты | `NexusAppContext`, `NexusRequestHandler`, `NexusHTTPServer`, `create_server`, `main` |
-| [`scanner.py`](../src/mac_nexus/scanner.py) | 1863 строки | Среда выполнения, снимок ID, телеметрия 3 контуров, 6 параллельных сканеров, `LIVE LOCK`, парсер `czkawka_cli` | `ScanEnvironment`, `ScanSnapshot`, `is_protected_path`, `detect_live_locks`, `get_telemetry`, `scan_system`, `scan_duplicates` |
-| [`executor.py`](../src/mac_nexus/executor.py) | 621 строка | Валидация целей, фоновые задания очистки и SHA-256 телепорта, Trash-перемещение, SSE-брокер, аудит-история | `EventBroker`, `HistoryStore`, `move_to_trash`, `teleport_file_sha256`, `start_execute_job`, `start_offload_job`, `trash_duplicate_files`, `open_tool` |
+| [`scanner.py`](../src/mac_nexus/scanner.py) | 3660 строк | Среда выполнения, снимок ID, телеметрия 3 контуров, 9 параллельных сканеров, `LIVE LOCK`, парсер `czkawka_cli`, Deep Radar, Trash TCC | `ScanEnvironment`, `ScanSnapshot`, `RadarTarget`, `TrashEntryTarget`, `is_protected_path`, `detect_live_locks`, `get_telemetry`, `scan_system`, `scan_deep_radar`, `scan_trash`, `scan_duplicates` |
+| [`executor.py`](../src/mac_nexus/executor.py) | расширен | Валидация целей, фоновые задания очистки, SHA-256 телепорта, Smart Close, Radar Action, Trash Empty, SSE-брокер, аудит-история | `EventBroker`, `HistoryStore`, `move_to_trash`, `teleport_file_sha256`, `start_execute_job`, `start_offload_job`, `start_smart_close_clean_job`, `start_radar_action_job`, `reveal_radar_target`, `purge_trash_items`, `trash_duplicate_files`, `open_tool` |
 
 ### Компонентная архитектура и потоки данных
 
@@ -88,6 +88,11 @@ flowchart TB
 | `ssd_mount_checker` | `None` (используется `ssd_mount.exists() and os.path.ismount(...)`) | Хук проверки монтирования SSD для `pytest` |
 | `cmd_runner` | `None` (используется `subprocess.run`) | Хук перехвата всех внешних команд для `pytest` |
 | `now_fn` | `time.time` | Источник текущего Unix-времени (для детерминированных проверок возраста) |
+| `applications_dirs` | `[Path("/Applications"), Path.home() / "Applications"]` | Каталоги приложений для `_scan_app_orphans` (Info.plist Bundle ID matching); подменяется в `pytest` |
+| `temp_dir` | `Path("/private/var/folders")` / `Path.home() / "Library/Caches"` | Системный temp для `_scan_system_caches`; подменяется в `pytest` |
+| `users_dir` | `Path("/Users")` | Корень `Users` для Codex/Hermes/Gemini путей в `_scan_ai_dev_deep`; подменяется в `pytest` |
+| `docker_bin` | `Path("/usr/local/bin/docker")` | CLI Docker для `_scan_ai_dev_deep` (codex-runtime-install прунинг); подменяется в `pytest` |
+| `go_bin` | `Path("/usr/local/go/bin/go")` / `Path.home() / ".local/bin/go"` | CLI Go для определения `GOPATH/pkg/mod` кэша в `_scan_pkg_caches`; подменяется в `pytest` |
 
 Все вызовы CLI проходят через обёртку `_run_cmd(env, args, timeout=5.0)` ([`scanner.py:164-179`](../src/mac_nexus/scanner.py#L164-L179)), которая при `OSError` или `subprocess.TimeoutExpired` возвращает синтетический `CompletedProcess(..., returncode=1, stdout="", stderr=str(exc))` и никогда не роняет процесс сканирования.
 
@@ -108,6 +113,8 @@ return f"{prefix}_{digest}"
 - `dmg_<14hex>` — призрачные образы `.dmg` (`<dev_entry>:<image_path>`);
 - `media_<14hex>` — медиа-кандидаты на телепорт в `offload_by_id` (ключ — `_safe_resolve(fp)`);
 - `dupf_<14hex>` — конкретные файлы в группах дубликатов `dup_files_by_id` (ключ — `_safe_resolve(path)`);
+- `radar_<14hex>` — файлы/папки в `ScanSnapshot.radar_by_id` (`RadarTarget`) для Deep Radar (`scan_deep_radar`);
+- `trash_<14hex>` — элементы `~/.Trash` в `ScanSnapshot.trash_by_id` (`TrashEntryTarget`) для `scan_trash`;
 - `dup_<12hex>` — идентификатор группы дубликатов (`hash_or_id`).
 
 `ScanSnapshot` ([`scanner.py:155-162`](../src/mac_nexus/scanner.py#L155-L162)) объединяет три словаря с внутренними серверными дескрипторами:
@@ -294,7 +301,7 @@ flowchart LR
 ### Поиск дубликатов через `czkawka_cli` (`scan_duplicates`)
 
 Функция `scan_duplicates(env, target)` ([`scanner.py:1797-1863`](../src/mac_nexus/scanner.py#L1797-L1863)):
-1. Разрешает только три целевых контура: `"downloads"` (`env.downloads_dir`), `"desktop"` (`env.desktop_dir`), `"ssd_media"` (`env.ssd_mount / "04_Media_Archive"`). Иное значение вызывает `ValueError` (`HTTP 400`). При `target == "ssd_media"` и отмонтированном SSD выбрасывает `RuntimeError` (`HTTP 409`).
+1. Разрешает четыре целевых контура: `"downloads"` (`env.downloads_dir`), `"desktop"` (`env.desktop_dir`), `"ssd_media"` (`env.ssd_mount / "04_Media_Archive"`), `"documents"` (`env.home / "Documents"`). Иное значение вызывает `ValueError` (`HTTP 400`). При `target == "ssd_media"` и отмонтированном SSD выбрасывает `RuntimeError` (`HTTP 409`).
 2. Вызывает `_collect_excluded_dirs(scan_dir, env, live_wt)` для сбора точных путей защищённых директорий (`.app`, `.photoslibrary`, `PROTECTED_DESKTOP_DIRS`, `SSD_LIVE_HEAVY_DIRS`, активные worktrees) и передаёт каждый отдельным флагом `-e <dir>`.
 3. Запускает `czkawka_cli dup` (по умолчанию метод сравнения `HASH` и алгоритм `BLAKE3`):
    - `-d <scan_dir>` — корневая директория поиска;
@@ -357,6 +364,24 @@ sequenceDiagram
 - `move_to_trash(src, env, live_worktree_paths)` отказывает, если объект не существует, является симлинком (`src.is_symlink()`) или подпадает под `is_protected_path`. После подсчёта размера выполняется `shutil.move(str(src), str(dest))`.
 - `trash_duplicate_files` ([`executor.py:555-593`](../src/mac_nexus/executor.py#L555-L593)) проверяет все `file_ids` в `snapshot.dup_files_by_id` и на `is_protected_path`, переносит файлы в `~/.Trash`, удаляет обработанные `file_id` из снапшота и инкрементирует `history`.
 
+### v2.0.0: Новые функции исполнителя (`executor.py`)
+
+**`start_smart_close_clean_job(snapshot, item_id, reopen, dry_run, env, broker)`:**
+Автоматически закрывает приложение, очищает его кэш через `_execute_single_target`, затем при `reopen=True` перезапускает. Использует `pgrep -x` с 10-секундным поллингом для подтверждения завершения процесса.
+- **HARD prohibition:** если `target.app_key in {"orca", "vscode"}`, немедленно возвращает `HTTP 409 Conflict` без запуска потока. Это защищает активные Orca worktrees и открытые редакторы VS Code от автоматического закрытия. Запрет неустраним (`dry_run=True` НЕ обходит его).
+
+**`start_radar_action_job(snapshot, radar_ids, action, shelf, dry_run, env, broker)`:**
+- `action == "trash"`: перемещает файлы из `radar_by_id` в `~/.Trash` через `move_to_trash`. Hotspot-файлы (с `is_hotspot: True`) отклоняются с `HTTP 409`.
+- `action == "teleport_ssd"`: копирует файл в `{ssd_mount}/{shelf}/Manual_Offload/{YYYY-MM}/` с SHA-256 верификацией через `teleport_file_sha256`. `shelf` проверяется по allowlist `SSD_SHELVES`.
+
+**`reveal_radar_target(snapshot, radar_id, env)`:**
+Открывает родительский каталог файла в Finder через `open -R <path>`. Выполняется синхронно (не фоновый поток).
+
+**`purge_trash_items(snapshot, mode, trash_ids, older_days, dry_run, env, broker)`:**
+- `mode == "selected"`: удаляет конкретные `trash_ids` из `trash_by_id` через `shutil.rmtree`/`unlink`.
+- `mode == "older_than"`: удаляет элементы старше `older_days` дней.
+- `mode == "finder_empty"`: вызывает `osascript` для Finder Empty Trash (обходит TCC ограничение). Все пути строго проверяются на вхождение в `env.trash_dir` (containment guard).
+
 ### Брокер событий `EventBroker` и журнал `HistoryStore`
 
 - **`EventBroker`** ([`executor.py:42-84`](../src/mac_nexus/executor.py#L42-L84)):
@@ -366,12 +391,13 @@ sequenceDiagram
 
 ### Запуск разрешённых инструментов (`open_tool`)
 
-Функция `open_tool(env, tool)` ([`executor.py:596-621`](../src/mac_nexus/executor.py#L596-L621)) поддерживает строго 5 ключей:
+Функция `open_tool(env, tool)` поддерживает строго 6 ключей:
 - `"digest"` — читает `env.digest_path` (`~/.local/state/mac-hygiene/digest_latest.md`) и возвращает `{"ok": True, "content": ...}` (или заглушку, если дайджест ещё не сгенерирован);
 - `"pearcleaner"` — `["open", "-a", "/Applications/Pearcleaner.app"]`;
 - `"daisydisk"` — `["open", "-a", "/Applications/DaisyDisk.app"]`;
 - `"finder_ssd"` — предварительно проверяет `ssd_is_mounted(env)` (иначе `LiveLockError` → `409`), затем `["open", str(env.ssd_mount)]`;
-- `"finder_downloads"` — `["open", str(env.downloads_dir)]`.
+- `"finder_downloads"` — `["open", str(env.downloads_dir)]`;
+- `"finder_trash"` — `["open", str(env.trash_dir)]` — открывает `~/.Trash` в Finder (полезно при TCC-restricted Trash).
 
 Неизвестное значение `tool` вызывает `UnknownTargetError` (`400`), а ненулевой код возврата `open` — `RuntimeError` (`500`).
 

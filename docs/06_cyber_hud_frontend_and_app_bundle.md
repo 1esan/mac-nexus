@@ -8,7 +8,7 @@
 
 ## 1. Zero-CDN дизайн и DOM-архитектура `index.html`
 
-Файл [`index.html`](../src/mac_nexus/static/index.html) (`603` строки) не подключает ни одного внешнего ресурса (`fonts.googleapis.com`, `unpkg`, `jsdelivr` и т. п. полностью отсутствуют). Вся графика, типографика и анимации опираются на локальный `/static/styles.css`, `<script src="/static/app.js" defer></script>`, встроенный векторный SVG и фоновый `<canvas>`.
+Файл [`index.html`](../src/mac_nexus/static/index.html) (`792` строки) не подключает ни одного внешнего ресурса (`fonts.googleapis.com`, `unpkg`, `jsdelivr` и т. п. полностью отсутствуют). Вся графика, типографика и анимации опираются на локальный `/static/styles.css`, `<script src="/static/app.js" defer></script>`, встроенный векторный SVG и фоновый `<canvas>`.
 
 ### 1.1. Иерархия DOM-слоёв
 
@@ -20,7 +20,7 @@
    - `#toast-container.toast-container` (`aria-live="polite"`) — всплывающие уведомления в правом верхнем углу (автоудаление через `4400` мс).
    - `.hud-shell` (`max-width: 1480px`) — главный контейнер интерфейса, состоящий из четырёх ключевых зон.
 3. **Top Telemetry & Command Bar (`header.hud-header.hud-panel`):**
-   - `.brand-cluster` — вращающаяся векторная эмблема (`svg.emblem-svg` с `.emblem-ring-outer`, `.emblem-ring-inner`, `.emblem-core`, 4 крестообразными `.emblem-tick`), заголовок `MAC NEXUS`, тег `ORBITAL HUD v1.0` и подзаголовок контура `Apple Silicon M4`.
+   - `.brand-cluster` — вращающаяся векторная эмблема (`svg.emblem-svg` с `.emblem-ring-outer`, `.emblem-ring-inner`, `.emblem-core`, 4 крестообразными `.emblem-tick`), заголовок `MAC NEXUS`, тег `ORBITAL HUD v2.0` и подзаголовок контура `Apple Silicon M4`.
    - `.header-status-cluster` — виджет радара `#radar-sweep-widget` (`#radar-state-text`: `ОЖИДАНИЕ` / `СКАН...` / `ГОТОВ`) и пилюли соединения `#pill-api-status` (`API: ONLINE (PID ...)`) и `#pill-sse-status` (`SSE: LIVE`).
    - `.header-controls-cluster` — главный переключатель безопасности `#dry-run-toggle` (`role="switch"`, `aria-checked="true"`, по умолчанию `ВКЛ · БЕЗОПАСНО`) и кнопка глобального обновления `#btn-refresh-all`.
 4. **3-Plane Orbital Reactor Grid (`section.telemetry-deck`):**
@@ -29,11 +29,13 @@
      - **Контур 2 (`#reactor-ssd`, violet):** `/Volumes/secret for mine` — `#ssd-arc-main` (процент заполнения SSD), `#ssd-arc-inner` (доля активных полок `01..99`), `#ssd-percent`, `#ssd-center-label`, `#ssd-used-total`, `#ssd-free`, `#ssd-fs-type`, `#ssd-shelves-summary`.
      - **Контур 3 (`#reactor-secondbrain`, emerald):** `SecondBrain iCloud` — `#sb-arc-main`, `#sb-arc-inner`, `#sb-notes-big`, `#sb-size`, `#sb-notes-count`, `#sb-mounted`, `#sb-risk` (индикатор `has_node_modules_risk`).
    - `.telemetry-chips-bar` — 5 телеметрических карточек: `M4 RAM` (`#chip-ram-value`, `#chip-ram-sub`), `Swap` (`#chip-swap-value`, `#chip-swap-sub`), `Призрачные DMG` (`#chip-dmg-value`, `#chip-dmg-sub`), `Живые агенты Orca` (`#chip-orca-value`, `#chip-orca-sub`) и анимированный одометр **«ВСЕГО ОСВОБОЖДЕНО»** (`#odometer-value`, бейдж `#odometer-delta`, `#odometer-sub`).
-5. **4 командные вкладки (`main.command-workspace.hud-panel`):**
-   - **01 · `РАДАР ОЧИСТКИ` (`#panel-radar`):** баннер `#radar-scan-banner` (`hidden` в простое), фильтры категорий `#radar-category-chips` (`all`, `pkg_cache`, `app_cache`, `downloads_inbox`, `dev_projects`, `ghost_dmgs`), селектор давности проектов `.age-selector` (`14д`, `30д`, `60д`), кнопки массового выделения (`#btn-select-all-ready`, `#btn-clear-radar-selection`, `#btn-rescan-radar`), `.summary-strip` (4 счётчика), список `#radar-items-list` и `.action-dock` с `#btn-execute-clean`.
-   - **02 · `ТЕЛЕПОРТ НА SSD` (`#panel-teleport`, `hidden`):** баннер `#ssd-unmounted-alert` (`hidden` при смонтированном SSD), визуальный канал `#teleport-beam-panel` (`NVMe // Desktop & Downloads` → `APFS SSD // 04_Media_Archive`, статус `#teleport-beam-status`), кнопки `#btn-select-all-media` / `#btn-clear-media-selection`, список медиа `#teleport-list` и `#btn-execute-offload`.
-   - **03 · `ДУБЛИКАТЫ` (`#panel-duplicates`, `hidden`):** переключатель области `#dup-target-group` (`downloads`, `desktop`, `ssd_media`), кнопка `#btn-scan-duplicates`, `.summary-strip` с политикой `1-й файл = ОРИГИНАЛ · Только ~/.Trash`, список групп `#duplicates-list` и `#btn-trash-duplicates`.
-   - **04 · `ПУЛЬТ КОНТУРОВ` (`#panel-planes`, `hidden`):** сетка полок `01..99` (`#shelves-grid`, статус `#shelves-mount-pill`), панель allowlist-запуска утилит `.tool-launch-grid` (`pearcleaner`, `daisydisk`, `finder_ssd`, `finder_downloads`, `digest`) и сводка трёх контуров `#planes-detail-grid`.
+5. **6 командных вкладок (`main.command-workspace.hud-panel`):**
+   - **01 · `РАДАР ОЧИСТКИ` (`#panel-radar`):** баннер `#radar-scan-banner` (`hidden` в простое), 9 chip-фильтров категорий `#radar-category-chips` (`all`, `ai_dev_deep`, `system_cache`, `app_orphans`, `app_cache`, `pkg_cache`, `downloads_inbox`, `dev_projects`, `ghost_dmgs`), селектор давности `.age-selector` (`14д`, `30д`, `60д`), кнопки `#btn-select-all-ready`, список `#radar-items-list` с `.js-smart-close-btn` на `item.locked && item.quittable` карточках (Smart Close modal + browser_warning amber notice). Smart Close HARD-FORBIDDEN для `orca` и `vscode`.
+   - **02 · `ГЛУБОКИЙ РАДАР` (`#panel-deepradar`, `hidden`):** threshold chips `50 / 250 / 1024 МБ` -> `GET /api/deep-radar?min_mb=...`, filter chips `all / movable / hotspot`, X-Ray карточки hotspot vs movable (sparse badge при `logical_bytes > size_bytes * 1.2`), `.js-radar-reveal-btn` -> `POST /api/radar-reveal`, `#radar-shelf-select` (`04_Media_Archive`, `03_Software_and_Installers`, `90_Cold_Archive`, `02_Project_Heavy`), кнопки `trash` и `teleport_ssd` -> `POST /api/radar-action`.
+   - **03 · `ТЕЛЕПОРТ МЕДИА` (`#panel-teleport`, `hidden`):** баннер `#ssd-unmounted-alert` (`hidden` при смонтированном SSD), визуальный канал `#teleport-beam-panel`, список медиа `#teleport-list` и `#btn-execute-offload`.
+   - **04 · `ДУБЛИКАТЫ` (`#panel-duplicates`, `hidden`):** переключатель области `#dup-target-group` (`downloads`, `desktop`, `ssd_media`, `documents`), кнопка `#btn-scan-duplicates`, список групп `#duplicates-list` и `#btn-trash-duplicates`.
+   - **05 · `КОРЗИНА` (`#panel-trash`, `hidden`):** `.summary-strip`, кнопка `#btn-refresh-trash` (`GET /api/trash`), режимные chip-кнопки (`>30д`, `>7д`, `selected`) -> `POST /api/empty-trash` (всегда Holo-подтверждение при `dry_run === false`), TCC Fallback banner при `tcc_restricted === true` (показывает `finder_item_count`, кнопки «Открыть Корзину в Finder» и «Очистить Корзину через Finder»).
+   - **06 · `ПУЛЬТ КОНТУРОВ` (`#panel-planes`, `hidden`):** сетка полок `01..99` (`#shelves-grid`), панель allowlist-запуска утилит `.tool-launch-grid` (`pearcleaner`, `daisydisk`, `finder_ssd`, `finder_downloads`, `finder_trash`, `digest`) и сводка трёх контуров `#planes-detail-grid`.
 6. **SSE Live Terminal Drawer & Holo Modal:**
    - `#cyber-terminal` (`.is-expanded` / `.is-collapsed`) — сворачиваемый нижний журнал SSE с превью последней строки (`#terminal-preview-line`), счётчиком (`#terminal-count`), кнопками `#btn-terminal-autoscroll` и `#btn-terminal-clear` и областью вывода `#terminal-log`.
    - `#holo-modal` (`hidden`, `role="dialog"`, `aria-modal="true"`) — универсальное голографическое окно для чтения Воскресного дайджеста (`#holo-modal-copy`) и подтверждения боевых операций (`#holo-modal-footer`, `#holo-modal-cancel`, `#holo-modal-confirm`, закрытие по `Escape`, клику на `#holo-modal-backdrop` или `#holo-modal-close`).
@@ -48,10 +50,12 @@
 | Контур 2 | `#ssd-arc-main`, `#ssd-arc-inner` | `planes.ssd.{mounted, used_percent, shelves}` | При `mounted=false` бейдж `НЕ ПОДКЛЮЧЁН` и показ `#ssd-unmounted-alert` |
 | Контур 3 | `#sb-notes-big`, `#sb-risk` | `planes.secondbrain.{mounted, md_notes_count, has_node_modules_risk}` | При `has_node_modules_risk=true` предупреждение `Обнаружен node_modules!` |
 | Чипы + Одометр | `#chip-ram-value`, `#chip-orca-value`, `#odometer-value` | `system.{ram_*, swap_*, ghost_dmgs_count, orca_live_worktrees}`, `history.total_reclaimed_bytes` | Анимация `animateOdometerTo()` + показ `#odometer-delta` на `4.2s` |
-| Tab 01 | `#radar-items-list`, `#sum-ready-bytes` | `GET /api/scan?older_days=<14|30|60>` → `items[]`, `summary` | Фильтрация по `state.activeCategory`; блокировка `item.locked` |
-| Tab 02 | `#teleport-list`, `#teleport-beam-panel` | `scan.offload_candidates[]` + SSE `job_id` | Луч `.is-transferring` при `activeJobKind === 'offload'` |
-| Tab 03 | `#duplicates-list`, `#dup-wasted-bytes` | `POST /api/duplicates` → `groups[]`, `total_wasted_bytes` | Индекс `0` защищён как `ОРИГИНАЛ / СОХРАНИТЬ`, выделяются копии `>=1` |
-| Tab 04 | `#shelves-grid`, `#planes-detail-grid` | `planes.ssd.shelves[]`, `planes.{nvme, ssd, secondbrain}` | Карточки полок `01..99` (`АКТИВНА` / `ОТСУТСТВУЕТ`) + кнопки `data-tool` |
+| Tab 01 | `#radar-items-list`, `#sum-ready-bytes`, `.js-smart-close-btn` | `GET /api/scan?older_days=<14|30|60>` → `items[]`, `summary` | Фильтрация по `state.activeCategory`; блокировка `item.locked`; Smart Close modal |
+| Tab 02 | `#panel-deepradar`, `#deep-radar-list`, `#radar-shelf-select`, `.js-radar-reveal-btn` | `GET /api/deep-radar?min_mb=...` → `items[]` | Sparse badge, hotspot badge, Finder reveal, shelf selector |
+| Tab 03 | `#teleport-list`, `#teleport-beam-panel` | `scan.offload_candidates[]` + SSE `job_id` | Луч `.is-transferring` при `activeJobKind === 'offload'` |
+| Tab 04 | `#duplicates-list`, `#dup-wasted-bytes` | `POST /api/duplicates` → `groups[]`, `total_wasted_bytes` | Индекс `0` защищён как `ОРИГИНАЛ / СОХРАНИТЬ`, выделяются копии `>=1`; target `documents` |
+| Tab 05 | `#panel-trash`, `.trash-tcc-banner`, `#btn-refresh-trash` | `GET /api/trash` → `tcc_restricted`, `items[]` | TCC banner при `tcc_restricted`, mode chips, Holo-confirm |
+| Tab 06 | `#shelves-grid`, `#planes-detail-grid` | `planes.ssd.shelves[]`, `planes.{nvme, ssd, secondbrain}` | Карточки полок `01..99` (`АКТИВНА` / `ОТСУТСТВУЕТ`) + кнопки `data-tool` вкл. `finder_trash` |
 
 ### 1.3. Семантика доступности (`a11y`) и кастомные контролы
 
@@ -67,7 +71,7 @@
 
 ## 2. Тема Cyber-HUD и CSS-система (`styles.css`)
 
-Таблица стилей [`styles.css`](../src/mac_nexus/static/styles.css) (`2321` строка) реализует тёмную стеклянность (glassmorphism) без сторонних CSS-фреймворков.
+Таблица стилей [`styles.css`](../src/mac_nexus/static/styles.css) (`2518` строк) реализует тёмную стеклянность (glassmorphism) без сторонних CSS-фреймворков.
 
 ### 2.1. Токены `:root` (точные значения в `styles.css`)
 
@@ -112,7 +116,7 @@
 
 ## 3. Внутренняя логика контроллера `app.js`
 
-Весь клиентский код [`app.js`](../src/mac_nexus/static/app.js) (`1913` строк) обёрнут в изолированную IIFE `(() => { 'use strict'; ... })()` с единым объектом состояния `state` (`dryRun: true`, `olderDays: 30`, `activeTab: 'radar'`, `activeCategory: 'all'`, `dupTarget: 'downloads'`, `selectedItemIds`/`selectedMediaIds`/`selectedDupFileIds`, счётчики одометра, состояние терминала, `eventSource`, `modalConfirmFn`).
+Весь клиентский код [`app.js`](../src/mac_nexus/static/app.js) (`2760` строк) обёрнут в изолированную IIFE `(() => { 'use strict'; ... })()` с единым объектом состояния `state` (`dryRun: true`, `olderDays: 30`, `activeTab: 'radar'`, `activeCategory: 'all'`, `dupTarget: 'downloads'`, `selectedItemIds`/`selectedMediaIds`/`selectedDupFileIds`, счётчики одометра, состояние терминала, `eventSource`, `modalConfirmFn`).
 
 ### 3.1. Поток данных UI, CSRF и SSE
 
@@ -154,7 +158,7 @@ flowchart TD
 ### 3.3. Словари UI, безопасность `DRY-RUN` / `LIVE LOCK`, SSE и XSS
 
 1. **Словари локализации и теги (`app.js`, строки `8–39`, `1083–1108`):**
-   - `CATEGORY_LABELS`: `all` («Все»), `pkg_cache` («Пакетные кэши»), `app_cache` («Кэши программ»), `downloads_inbox` («Downloads Inbox»), `dev_projects` («Проекты ~/Projects»), `ghost_dmgs` («Образы DMG»).
+   - `CATEGORY_LABELS`: `all` («Все»), `ai_dev_deep` («AI/Dev Deep»), `system_cache` («Системные кэши»), `app_orphans` («Осиротевшие»), `app_cache` («Кэши программ»), `pkg_cache` («Пакетные кэши»), `downloads_inbox` («Downloads Inbox»), `dev_projects` («Проекты ~/Projects»), `ghost_dmgs` («Образы DMG»).
    - `RISK_META`: `low` (`Низкий риск`), `safe` (`Безопасно`), `medium` (`Умеренный`), `high` (`Внимание`).
    - `ACTION_LABELS`: `trash` (`В Корзину`), `prune`/`clean_cache` (`Очистка кэша`), `detach_dmg`/`detach` (`Отмонтировать DMG`), `organize` (`Organize`), `rm_artifact` (`Удаление артефакта`).
    - Теги SSE-журнала (`classifyTagStyle`): `[SCAN]` (`.log-tag--scan`), `[LOCK*]` (`.log-tag--lock`), `[SHA*]`/`[TELEPORT*]` (`.log-tag--sha`), `[DRY*]` (`.log-tag--dry`), `[DONE*]` (`.log-tag--done`), `[ERR*]`/`[FAIL*]`/`[WARN*]` (`.log-tag--err`).
@@ -227,7 +231,7 @@ flowchart TD
 Ключевые параметры бандла `/Users/egorlabutin/Desktop/Mac Nexus.app`:
 
 - **Структура `Contents/`:**
-  - `Contents/Info.plist` (`32` строки): `CFBundleIdentifier=local.egorlabutin.mac-nexus`, `CFBundleDisplayName=Mac Nexus`, `CFBundleExecutable=MacNexus`, `CFBundleIconFile=AppIcon.icns`, `CFBundleShortVersionString=1.0.0`, `LSMinimumSystemVersion=13.0`, `LSUIElement=true`, `NSHighResolutionCapable=true`.
+  - `Contents/Info.plist` (`32` строки): `CFBundleIdentifier=local.egorlabutin.mac-nexus`, `CFBundleDisplayName=Mac Nexus`, `CFBundleExecutable=MacNexus`, `CFBundleIconFile=AppIcon.icns`, `CFBundleShortVersionString=2.0.0`, `LSMinimumSystemVersion=13.0`, `LSUIElement=true`, `NSHighResolutionCapable=true`.
   - Флаг `LSUIElement=true` переводит приложение-лаунчер в агентный режим macOS: после открытия браузера в Dock не остаётся зависшая иконка shell-скрипта и не открывается окно Terminal.
   - `Contents/MacOS/MacNexus` отличается от `Start_Mac_Nexus.command` тем, что при отсутствии Python 3 или таймауте `5s` показывает нативное системное уведомление через `/usr/bin/osascript -e 'display notification ...'` и фиксирует диагностику в `~/.local/state/mac-nexus/server.log`.
 

@@ -34,9 +34,9 @@
         <div class="brand-text">
           <div class="brand-title-row">
             <h1 class="brand-title">MAC NEXUS</h1>
-            <span class="hud-version-tag">ORBITAL HUD v1.0</span>
+            <span class="hud-version-tag">ORBITAL HUD v2.0</span>
           </div>
-          <p class="brand-subtitle">КОМАНДНЫЙ КОНТУР ХРАНИЛИЩА &amp; ТЕЛЕМЕТРИИ // APPLE SILICON M4</p>
+          <p class="brand-subtitle">ГЛУБОКАЯ ИНТЕЛЛЕКТУАЛЬНАЯ ОЧИСТКА &amp; 3-PLANE ТЕЛЕМЕТРИЯ</p>
         </div>
       </div>
 
@@ -279,7 +279,7 @@
       </div>
     </section>
 
-    <!-- 4 Interactive Command Modules -->
+    <!-- 6 Interactive Command Modules -->
     <main class="command-workspace hud-panel">
       <div class="hud-corners" aria-hidden="true"><span></span><span></span></div>
 
@@ -290,20 +290,32 @@
           <span id="badge-tab-radar" class="tab-badge">0</span>
         </button>
 
-        <button id="tab-btn-teleport" type="button" role="tab" aria-selected="false" aria-controls="panel-teleport" class="tab-btn" data-tab="teleport">
+        <button id="tab-btn-deepradar" type="button" role="tab" aria-selected="false" aria-controls="panel-deepradar" class="tab-btn" data-tab="deepradar">
           <span class="tab-code">02</span>
-          <span class="tab-label">ТЕЛЕПОРТ НА SSD</span>
+          <span class="tab-label">ГЛУБОКИЙ РАДАР</span>
+          <span id="badge-tab-deepradar" class="tab-badge">0</span>
+        </button>
+
+        <button id="tab-btn-teleport" type="button" role="tab" aria-selected="false" aria-controls="panel-teleport" class="tab-btn" data-tab="teleport">
+          <span class="tab-code">03</span>
+          <span class="tab-label">ТЕЛЕПОРТ МЕДИА</span>
           <span id="badge-tab-teleport" class="tab-badge">0</span>
         </button>
 
         <button id="tab-btn-duplicates" type="button" role="tab" aria-selected="false" aria-controls="panel-duplicates" class="tab-btn" data-tab="duplicates">
-          <span class="tab-code">03</span>
+          <span class="tab-code">04</span>
           <span class="tab-label">ДУБЛИКАТЫ</span>
           <span id="badge-tab-duplicates" class="tab-badge">0</span>
         </button>
 
+        <button id="tab-btn-trash" type="button" role="tab" aria-selected="false" aria-controls="panel-trash" class="tab-btn" data-tab="trash">
+          <span class="tab-code">05</span>
+          <span class="tab-label">КОРЗИНА</span>
+          <span id="badge-tab-trash" class="tab-badge">0</span>
+        </button>
+
         <button id="tab-btn-planes" type="button" role="tab" aria-selected="false" aria-controls="panel-planes" class="tab-btn" data-tab="planes">
-          <span class="tab-code">04</span>
+          <span class="tab-code">06</span>
           <span class="tab-label">ПУЛЬТ КОНТУРОВ</span>
         </button>
       </nav>
@@ -314,18 +326,21 @@
           <div class="scan-sweep-ring" aria-hidden="true"></div>
           <div class="scan-banner-copy">
             <strong>АКТИВНОЕ СКАНИРОВАНИЕ КОНТУРОВ...</strong>
-            <span>Анализ кэшей, Downloads Inbox, ~/Projects и LIVE LOCK процессов</span>
+            <span>Анализ AI &amp; Dev, системных кэшей, сирот программ, Downloads Inbox, ~/Projects и LIVE LOCK процессов</span>
           </div>
         </div>
 
         <div class="panel-toolbar">
           <div id="radar-category-chips" class="chip-group" role="group" aria-label="Фильтр категорий">
             <button type="button" class="filter-chip is-active" data-cat="all">Все</button>
-            <button type="button" class="filter-chip" data-cat="pkg_cache">Пакетные кэши</button>
-            <button type="button" class="filter-chip" data-cat="app_cache">Кэши программ</button>
-            <button type="button" class="filter-chip" data-cat="downloads_inbox">Downloads Inbox</button>
-            <button type="button" class="filter-chip" data-cat="dev_projects">Проекты ~/Projects</button>
-            <button type="button" class="filter-chip" data-cat="ghost_dmgs">Образы DMG</button>
+            <button type="button" class="filter-chip" data-cat="ai_dev_deep">AI &amp; Dev</button>
+            <button type="button" class="filter-chip" data-cat="system_cache">Система и кэши</button>
+            <button type="button" class="filter-chip" data-cat="app_orphans">Сироты программ</button>
+            <button type="button" class="filter-chip" data-cat="app_cache">Приложения</button>
+            <button type="button" class="filter-chip" data-cat="pkg_cache">Пакеты</button>
+            <button type="button" class="filter-chip" data-cat="downloads_inbox">Downloads</button>
+            <button type="button" class="filter-chip" data-cat="dev_projects">Проекты</button>
+            <button type="button" class="filter-chip" data-cat="ghost_dmgs">DMG</button>
           </div>
 
           <div class="toolbar-right">
@@ -384,7 +399,93 @@
         </div>
       </section>
 
-      <!-- TAB 2: ТЕЛЕПОРТ НА SSD -->
+      <!-- TAB 2: ГЛУБОКИЙ РАДАР -->
+      <section id="panel-deepradar" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-deepradar" hidden>
+        <div id="deep-ssd-unmounted-alert" class="alert-banner alert-banner--amber" hidden>
+          <strong>Внешний SSD не подключён:</strong> для реального переноса крупных файлов на полку подключите <code>/Volumes/secret for mine</code> или используйте <code>DRY-RUN</code>.
+        </div>
+
+        <div class="panel-toolbar">
+          <div class="toolbar-left-controls">
+            <div id="deep-min-mb-group" class="age-selector" role="group" aria-label="Минимальный порог размера">
+              <span class="toolbar-caption">Порог:</span>
+              <button type="button" class="age-btn deep-min-btn is-active" data-min-mb="50">50 МБ</button>
+              <button type="button" class="age-btn deep-min-btn" data-min-mb="250">250 МБ</button>
+              <button type="button" class="age-btn deep-min-btn" data-min-mb="1024">1 ГБ</button>
+            </div>
+
+            <div id="deep-filter-chips" class="chip-group" role="group" aria-label="Фильтр объектов глубокого радара">
+              <button type="button" class="filter-chip is-active" data-view="all">Все</button>
+              <button type="button" class="filter-chip" data-view="movable">Файлы для действий</button>
+              <button type="button" class="filter-chip" data-view="hotspot">Системные Гиганты (X-Ray)</button>
+            </div>
+          </div>
+
+          <div class="toolbar-right">
+            <button id="btn-select-all-deep" type="button" class="btn-cyber btn-cyber--outline">
+              Выбрать переносимые
+            </button>
+            <button id="btn-clear-deep-selection" type="button" class="btn-cyber btn-cyber--ghost btn-sm">
+              Сбросить
+            </button>
+            <button id="btn-scan-deepradar" type="button" class="btn-cyber btn-cyber--cyan">
+              <svg viewBox="0 0 24 24" class="btn-icon" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <span>Сканировать гигантов</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="summary-strip summary-strip--3">
+          <div class="summary-stat">
+            <span class="summary-stat-label">Найдено объектов</span>
+            <span id="deep-sum-count" class="summary-stat-val text-cyan">0</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Переносимых файлов</span>
+            <span id="deep-sum-movable" class="summary-stat-val text-emerald">0 Б</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Системных гигантов</span>
+            <span id="deep-sum-hotspot" class="summary-stat-val text-violet">0 Б</span>
+          </div>
+        </div>
+
+        <div id="deep-radar-list" class="items-list" aria-live="polite"></div>
+
+        <div class="action-dock">
+          <div class="action-dock-info">
+            <span class="dock-selected-label">Выбрано: <strong id="deep-selected-count">0</strong></span>
+            <span class="dock-divider">|</span>
+            <span class="dock-selected-size">Объём: <strong id="deep-selected-bytes">0 Б</strong></span>
+            <span class="dock-divider">|</span>
+            <span id="deep-mode-hint" class="dock-mode-tag dock-mode-tag--safe">DRY-RUN СИМУЛЯЦИЯ</span>
+          </div>
+          <div class="dock-actions-group">
+            <label class="shelf-select-wrap">
+              <span class="toolbar-caption">Полка SSD:</span>
+              <select id="radar-shelf-select" class="hud-select" aria-label="Целевая полка SSD">
+                <option value="04_Media_Archive">04_Media_Archive</option>
+                <option value="03_Software_and_Installers">03_Software_and_Installers</option>
+                <option value="90_Cold_Archive" selected>90_Cold_Archive</option>
+                <option value="02_Project_Heavy">02_Project_Heavy</option>
+              </select>
+            </label>
+            <button id="btn-radar-trash" type="button" class="btn-plasma btn-plasma--crimson" disabled>
+              <span class="btn-plasma-glow" aria-hidden="true"></span>
+              <span>УБРАТЬ В КОРЗИНУ</span>
+            </button>
+            <button id="btn-radar-teleport" type="button" class="btn-plasma btn-plasma--violet" disabled>
+              <span class="btn-plasma-glow" aria-hidden="true"></span>
+              <span>ТЕЛЕПОРТ НА ПОЛКУ SSD (SHA-256)</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: ТЕЛЕПОРТ МЕДИА -->
       <section id="panel-teleport" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-teleport" hidden>
         <div id="ssd-unmounted-alert" class="alert-banner alert-banner--amber" hidden>
           <strong>Внешний SSD не подключён:</strong> том <code>/Volumes/secret for mine</code> недоступен. Подключите накопитель для реального SHA-256 телепорта или используйте <code>DRY-RUN</code>.
@@ -439,12 +540,13 @@
         </div>
       </section>
 
-      <!-- TAB 3: ДУБЛИКАТЫ -->
+      <!-- TAB 4: ДУБЛИКАТЫ -->
       <section id="panel-duplicates" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-duplicates" hidden>
         <div class="panel-toolbar">
           <div id="dup-target-group" class="chip-group" role="group" aria-label="Целевая область поиска дубликатов">
             <button type="button" class="filter-chip is-active" data-target="downloads">Downloads</button>
             <button type="button" class="filter-chip" data-target="desktop">Desktop</button>
+            <button type="button" class="filter-chip" data-target="documents">Documents</button>
             <button type="button" class="filter-chip" data-target="ssd_media">SSD Media</button>
           </div>
 
@@ -489,7 +591,88 @@
         </div>
       </section>
 
-      <!-- TAB 4: ПУЛЬТ КОНТУРОВ -->
+      <!-- TAB 5: КОРЗИНА -->
+      <section id="panel-trash" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-trash" hidden>
+        <div class="summary-strip">
+          <div class="summary-stat">
+            <span class="summary-stat-label">Размер Корзины</span>
+            <span id="trash-sum-total" class="summary-stat-val text-cyan">0 Б</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Объектов</span>
+            <span id="trash-sum-count" class="summary-stat-val text-violet">0</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Старше 7д</span>
+            <span id="trash-sum-7d" class="summary-stat-val text-amber">0 Б</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Старше 30д</span>
+            <span id="trash-sum-30d" class="summary-stat-val text-crimson">0 Б</span>
+          </div>
+        </div>
+
+        <div class="panel-toolbar">
+          <div class="toolbar-left-controls">
+            <button id="btn-refresh-trash" type="button" class="btn-cyber btn-cyber--cyan">
+              Обновить Корзину
+            </button>
+            <button id="btn-purge-trash-30d" type="button" class="btn-cyber btn-cyber--crimson">
+              Очистить &gt;30д
+            </button>
+            <button id="btn-purge-trash-7d" type="button" class="btn-cyber btn-cyber--amber">
+              Очистить &gt;7д
+            </button>
+          </div>
+
+          <div class="toolbar-right">
+            <button id="btn-select-trash-7d" type="button" class="btn-cyber btn-cyber--outline">
+              Выбрать &gt;7д
+            </button>
+            <button id="btn-clear-trash-selection" type="button" class="btn-cyber btn-cyber--ghost btn-sm">
+              Сбросить
+            </button>
+          </div>
+        </div>
+
+        <div id="trash-tcc-banner" class="tcc-fallback-card" hidden>
+          <div class="tcc-fallback-head">
+            <span class="badge-chip badge-chip--amber">MACOS TCC PRIVACY GUARD</span>
+            <span class="tcc-count-pill">Объектов в Finder: <strong id="trash-tcc-count">0</strong></span>
+          </div>
+          <p class="tcc-fallback-copy">
+            Политика приватности macOS (TCC) ограничивает прямой доступ Python-процесса к содержимому <code>~/.Trash</code>.
+            Вы можете безопасно открыть Корзину в Finder или запустить очистку через системный AppleScript Finder.
+          </p>
+          <div class="tcc-fallback-actions">
+            <button id="btn-trash-open-finder" type="button" class="btn-cyber btn-cyber--cyan">
+              Открыть Корзину в Finder
+            </button>
+            <button id="btn-trash-finder-empty" type="button" class="btn-plasma btn-plasma--crimson">
+              <span class="btn-plasma-glow" aria-hidden="true"></span>
+              <span>Очистить Корзину через Finder</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="trash-items-list" class="items-list" aria-live="polite"></div>
+
+        <div id="trash-action-dock" class="action-dock">
+          <div class="action-dock-info">
+            <span class="dock-selected-label">К удалению: <strong id="trash-selected-count">0</strong></span>
+            <span class="dock-divider">|</span>
+            <span class="dock-selected-size">Освободится: <strong id="trash-selected-bytes">0 Б</strong></span>
+            <span class="dock-divider">|</span>
+            <span id="trash-mode-hint" class="dock-mode-tag dock-mode-tag--safe">DRY-RUN СИМУЛЯЦИЯ</span>
+          </div>
+          <button id="btn-purge-trash-selected" type="button" class="btn-plasma btn-plasma--crimson" disabled>
+            <span class="btn-plasma-glow" aria-hidden="true"></span>
+            <span>ОЧИСТИТЬ ВЫБРАННОЕ НАВСЕГДА</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 6: ПУЛЬТ КОНТУРОВ -->
       <section id="panel-planes" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-planes" hidden>
         <div class="planes-layout">
           <div class="planes-section">
@@ -528,6 +711,12 @@
                 <span class="tool-btn-tag">INBOX</span>
                 <span class="tool-btn-title">Finder: Downloads</span>
                 <span class="tool-btn-sub">~/Downloads разбор</span>
+              </button>
+
+              <button type="button" class="tool-btn hud-panel" data-tool="finder_trash">
+                <span class="tool-btn-tag">TRASH</span>
+                <span class="tool-btn-title">Finder: Корзина</span>
+                <span class="tool-btn-sub">~/.Trash обзор в Finder</span>
               </button>
 
               <button type="button" class="tool-btn tool-btn--featured hud-panel" data-tool="digest">

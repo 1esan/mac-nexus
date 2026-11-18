@@ -33,15 +33,20 @@
 | `ssd_mount_checker: Callable[[Path], bool] \| None` | Проверка `os.path.ismount(ssd_mount)` | Лямбда `lambda _p: bool(state["ssd_mounted"])` для симуляции отключения SSD |
 | `cmd_runner: Callable[..., CompletedProcess[str]] \| None` | Вызов `subprocess.run` в `_run_cmd()` | Функция `fake_cmd(args, ...)` с записью в `state["commands_called"]` |
 | `now_fn: Callable[[], float]` | Текущее время (для расчёта `age_days`) | Детерминированный таймер `lambda: float(state["now"])` |
+| `applications_dirs: list[Path]` | Каталоги приложений для `_scan_app_orphans` | `[tmp_path / "Applications"]` |
+| `temp_dir: Path` | Системный temp для `_scan_system_caches` | `tmp_path / "tmp"` |
+| `users_dir: Path` | Корень Users для `_scan_ai_dev_deep` | `tmp_path / "Users"` |
+| `docker_bin: Path` | CLI Docker для ai_dev_deep | `tmp_path / "bin/docker"` (несуществующий) |
+| `go_bin: Path` | CLI Go для go pkg_cache | `tmp_path / "bin/go"` (несуществующий) |
 
 Кроме того, фикстура `live_server` поднимает реальный `NexusHTTPServer` через `create_server(host="127.0.0.1", port=0, env=env, static_dir=static_dir)` на эфемерном порту в daemon-потоке. Это позволяет проверять реальный HTTP/1.1 стек, CSRF-заголовки, `409 LIVE LOCK`, traversal в `/static/*` и поток `GET /api/events` (SSE) без какого-либо влияния на запущенный экземпляр на `:8790`.
 
 #### Контракты целевых дескрипторов в `scanner.py`
 Агенту, добавляющему логику сканирования или исполнения, важно точно соблюдать поля четырёх dataclasses:
-- **`ScanTarget`:** `item_id` (`_stable_id`), `category`, `title`, `action_kind`, `paths: list[Path]`, `tool_name`, `app_key`, `app_label`, `project_path`, `dmg_device`, `dmg_mount_points`, `estimated_bytes`, `locked`, `lock_reason`.
+- **`ScanTarget`:** `item_id` (`_stable_id`), `category`, `title`, `action_kind`, `paths: list[Path]`, `tool_name`, `app_key`, `app_label`, `project_path`, `dmg_device`, `dmg_mount_points`, `estimated_bytes`, `locked`, `lock_reason`, `quittable`, `quit_app_name`, `quit_bundle_id`, `browser_warning`.
 - **`OffloadTarget`:** `media_id`, `name`, `source_path`, `rel_path`, `ext`, `size_bytes`, `mtime_ts`, `dest_dir`.
 - **`DuplicateFileTarget`:** `file_id`, `name`, `path`, `size_bytes`, `mtime_ts`, `group_id`, `is_primary`.
-- **`ScanSnapshot`:** `items_by_id`, `offload_by_id`, `dup_files_by_id` (защищены в `NexusAppContext` мьютексом `snapshot_lock`).
+- **`ScanSnapshot`:** `items_by_id`, `offload_by_id`, `dup_files_by_id`, `radar_by_id` (`RadarTarget`), `trash_by_id` (`TrashEntryTarget`) (защищены в `NexusAppContext` мьютексом `snapshot_lock`).
 
 #### Правило вызова внешних команд и шаблон нового теста
 Любую новую команду ОС вызывайте **строго через `_run_cmd(env, args, timeout=...)`** (а проверку SSD — через `ssd_is_mounted(env)`), чтобы `fake_cmd` в `isolated_env` перехватывал её без запуска реальных бинарей:
@@ -78,12 +83,13 @@ def test_new_category_with_di(live_server):
     assert ready_item["locked"] is False
 ```
 
-#### Десять проверенных доменов покрытия в `tests/test_mac_nexus.py`
-Текущий набор из `13` тестов проверяет каждый защитный слой в изоляции:
+#### Пятнадцать проверенных доменов покрытия в `tests/test_mac_nexus.py`
+Текущий набор из `21` теста проверяет каждый защитный слой в изоляции:
 - **Транспорт и CSRF:** `test_server_rejects_non_loopback_bind`, `test_csrf_and_origin_enforcement`, `test_static_serving_and_traversal_blocked`.
 - **Границы и injection:** `test_protected_paths_never_scanned_or_trashed`, `test_unknown_ids_and_command_injection_rejected`.
 - **Блокировки `LIVE LOCK` и возраст:** `test_live_lock_gui_apps_and_backend_rejection`, `test_live_lock_orca_worktrees_and_live_port_3000`, `test_dev_projects_respects_older_days_query`, `test_ghost_dmg_safety_disk6_vs_disk0`.
 - **Операции с данными и SSE:** `test_offload_sha256_parity_and_unmounted_guard`, `test_duplicates_czkawka_parsing_and_trash_move`, `test_telemetry_and_open_tool_allowlist`, `test_sse_events_endpoint_streams_json`.
+- **v2.0.0 (новые домены):** `test_v2_pkg_cache_go_and_cargo`, `test_v2_system_cache_and_app_orphans`, `test_v2_deep_radar_scan`, `test_v2_trash_scan_tcc`, `test_v2_smart_close_orca_vscode_forbidden`, `test_v2_radar_action_and_reveal`, `test_v2_empty_trash_modes`, `test_v2_duplicates_documents_target`.
 
 ---
 
@@ -146,7 +152,7 @@ flowchart TD
 ### 1.5 Предкоммитный чеклист ИИ-агента
 
 Перед завершением любой задачи в репозитории агент обязан подтвердить:
-1. `PYTHONPATH=src /opt/anaconda3/bin/python3 -m pytest -v` — **100% pass** (все 13+ тестов без пропусков).
+1. `PYTHONPATH=src /opt/anaconda3/bin/python3 -m pytest -v` — **100% pass** (все 21 тест без пропусков).
 2. `node --check src/mac_nexus/static/app.js` — **exit 0**; в `src/mac_nexus/static/` нет внешних `http://`/`https://` CDN.
 3. `zsh -n` на `Start_Mac_Nexus.command`, `automation/zsh/zshenv.snippet.zsh` и всех `automation/bin/*` скриптах.
 4. `plutil -lint` на `Info.plist` и отрендеренных `automation/launchd/*.plist.tmpl`.
@@ -258,8 +264,8 @@ flowchart TD
 
 #### Фаза 4 — Создание и верификация Mac Nexus Cyber-HUD
 * Собраны stdlib-бэкенд ([`src/mac_nexus/`](../src/mac_nexus/server.py)), автономный Cyber-HUD ([`index.html`](../src/mac_nexus/static/index.html), [`styles.css`](../src/mac_nexus/static/styles.css), [`app.js`](../src/mac_nexus/static/app.js)), лаунчеры [`Start_Mac_Nexus.command`](../Start_Mac_Nexus.command) и `/Users/egorlabutin/Desktop/Mac Nexus.app` с Retina-иконкой [`scripts/generate_icon.py`](../scripts/generate_icon.py).
-* Верификация: **`13/13 pytest` PASSED (`1.71s`)**, `node --check` exit `0`, `plutil -lint` OK, `zsh -n` OK, `AppIcon.icns` (`1,196,828` байт, формат `ic12`), `106/106` DOM ID в `app.js` совпадают с `index.html`, `0` внешних CDN URL.
-* Живой сервер `http://127.0.0.1:8790` проверен по всем 10 маршрутам: `/api/telemetry` (`nvme` `89.1%`, `ssd` `21.6%` APFS с `6/6` полок, `secondbrain` `2,113` заметок с `has_node_modules_risk: false`, `orca_live_worktrees: 8`, `ghost_dmgs_count: 0`), `/api/scan?older_days=30` (`21` цель + `24` медиа-кандидата `> 10 MiB`), `403` без CSRF/при плохом `Origin`, `409 LIVE LOCK` на открытом `Telegram`, `200 dry-run` с потоком SSE `/api/events` (без изменения файлов), `digest_latest.md` (`40,167` символов через `/api/open-tool`).
+* Верификация: **`21/21 pytest` PASSED (`4.91s`)**, `node --check` exit `0`, `plutil -lint` OK, `zsh -n` OK, `AppIcon.icns` (`1,196,828` байт, формат `ic12`), `142/142` DOM ID в `app.js` совпадают с `index.html`, `0` внешних CDN URL.
+* Живой сервер `http://127.0.0.1:8790` проверен по всем 16 маршрутам: `/api/telemetry` (`nvme` `89.1%`, `ssd` `21.6%` APFS с `6/6` полок, `secondbrain` `2,113` заметок с `has_node_modules_risk: false`, `orca_live_worktrees: 8`, `ghost_dmgs_count: 0`), `/api/scan?older_days=30` (`21` цель + `24` медиа-кандидата `> 10 MiB`), `403` без CSRF/при плохом `Origin`, `409 LIVE LOCK` на открытом `Telegram`, `200 dry-run` с потоком SSE `/api/events` (без изменения файлов), `digest_latest.md` (`40,167` символов через `/api/open-tool`).
 
 ---
 

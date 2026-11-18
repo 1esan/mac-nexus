@@ -20,16 +20,22 @@ from .executor import (
     LiveLockError,
     UnknownTargetError,
     open_tool,
+    purge_trash_items,
+    reveal_radar_target,
     start_execute_job,
     start_offload_job,
+    start_radar_action_job,
+    start_smart_close_clean_job,
     trash_duplicate_files,
 )
 from .scanner import (
     ScanEnvironment,
     ScanSnapshot,
     get_telemetry,
+    scan_deep_radar,
     scan_duplicates,
     scan_system,
+    scan_trash,
 )
 
 
@@ -65,6 +71,16 @@ def _is_valid_origin(origin: str) -> bool:
     except ValueError:
         return False
     return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"}
+
+
+def _copy_snapshot(snapshot: ScanSnapshot) -> ScanSnapshot:
+    return ScanSnapshot(
+        items_by_id=dict(snapshot.items_by_id),
+        offload_by_id=dict(snapshot.offload_by_id),
+        dup_files_by_id=dict(snapshot.dup_files_by_id),
+        radar_by_id=dict(snapshot.radar_by_id),
+        trash_by_id=dict(snapshot.trash_by_id),
+    )
 
 
 class NexusRequestHandler(BaseHTTPRequestHandler):
@@ -206,6 +222,25 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, payload)
             return
 
+        if route == "/api/deep-radar":
+            qs = parse_qs(parsed.query)
+            try:
+                min_mb = int(qs.get("min_mb", ["50"])[0])
+            except (ValueError, TypeError):
+                min_mb = 50
+            payload, radar_by_id = scan_deep_radar(self.ctx.env, min_mb=min_mb)
+            with self.ctx.snapshot_lock:
+                self.ctx.snapshot.radar_by_id.update(radar_by_id)
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if route == "/api/trash":
+            payload, trash_by_id = scan_trash(self.ctx.env)
+            with self.ctx.snapshot_lock:
+                self.ctx.snapshot.trash_by_id = dict(trash_by_id)
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
         if route == "/api/events":
             self._handle_sse()
             return
@@ -259,11 +294,7 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 return
             try:
                 with self.ctx.snapshot_lock:
-                    snapshot_copy = ScanSnapshot(
-                        items_by_id=dict(self.ctx.snapshot.items_by_id),
-                        offload_by_id=dict(self.ctx.snapshot.offload_by_id),
-                        dup_files_by_id=dict(self.ctx.snapshot.dup_files_by_id),
-                    )
+                    snapshot_copy = _copy_snapshot(self.ctx.snapshot)
                 job_id = start_execute_job(
                     self.ctx.env, snapshot_copy, item_ids, dry_run, self.ctx.broker, self.ctx.history
                 )
@@ -282,11 +313,7 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 return
             try:
                 with self.ctx.snapshot_lock:
-                    snapshot_copy = ScanSnapshot(
-                        items_by_id=dict(self.ctx.snapshot.items_by_id),
-                        offload_by_id=dict(self.ctx.snapshot.offload_by_id),
-                        dup_files_by_id=dict(self.ctx.snapshot.dup_files_by_id),
-                    )
+                    snapshot_copy = _copy_snapshot(self.ctx.snapshot)
                 job_id = start_offload_job(
                     self.ctx.env, snapshot_copy, media_ids, dry_run, self.ctx.broker, self.ctx.history
                 )
@@ -295,6 +322,119 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             except LiveLockError as exc:
                 self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": str(exc)})
+            return
+
+        if route == "/api/smart-close-clean":
+            item_id = body.get("item_id")
+            reopen = body.get("reopen", True)
+            dry_run = body.get("dry_run", True)
+            if not isinstance(item_id, str) or not item_id.strip():
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "item_id must be a non-empty string"})
+                return
+            if not isinstance(reopen, bool) or not isinstance(dry_run, bool):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "reopen and dry_run must be booleans"})
+                return
+            try:
+                with self.ctx.snapshot_lock:
+                    snapshot_copy = _copy_snapshot(self.ctx.snapshot)
+                job_id = start_smart_close_clean_job(
+                    self.ctx.env, snapshot_copy, item_id, reopen, dry_run, self.ctx.broker, self.ctx.history
+                )
+                self._send_json(HTTPStatus.OK, {"ok": True, "job_id": job_id})
+            except UnknownTargetError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            except LiveLockError as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": f"LIVE LOCK: {exc}"})
+            return
+
+        if route == "/api/radar-action":
+            radar_ids = body.get("radar_ids")
+            action = body.get("action")
+            shelf = body.get("shelf", "90_Cold_Archive")
+            dry_run = body.get("dry_run", True)
+            if not isinstance(radar_ids, list) or not all(isinstance(x, str) for x in radar_ids):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "radar_ids must be a list of strings"})
+                return
+            if not isinstance(action, str) or not isinstance(shelf, str):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "action and shelf must be strings"})
+                return
+            if not isinstance(dry_run, bool):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "dry_run must be a boolean"})
+                return
+            try:
+                with self.ctx.snapshot_lock:
+                    snapshot_copy = _copy_snapshot(self.ctx.snapshot)
+                job_id = start_radar_action_job(
+                    self.ctx.env,
+                    snapshot_copy,
+                    radar_ids,
+                    action,
+                    shelf,
+                    dry_run,
+                    self.ctx.broker,
+                    self.ctx.history,
+                )
+                self._send_json(HTTPStatus.OK, {"ok": True, "job_id": job_id})
+            except UnknownTargetError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            except LiveLockError as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": str(exc)})
+            return
+
+        if route == "/api/radar-reveal":
+            radar_id = body.get("radar_id")
+            if not isinstance(radar_id, str) or not radar_id.strip():
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "radar_id must be a non-empty string"})
+                return
+            try:
+                with self.ctx.snapshot_lock:
+                    snapshot_copy = _copy_snapshot(self.ctx.snapshot)
+                resp = reveal_radar_target(self.ctx.env, snapshot_copy, radar_id)
+                self._send_json(HTTPStatus.OK, resp)
+            except UnknownTargetError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            except LiveLockError as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": str(exc)})
+            except RuntimeError as exc:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
+            return
+
+        if route == "/api/empty-trash":
+            mode = body.get("mode")
+            trash_ids = body.get("trash_ids", [])
+            older_days = body.get("older_days", 30)
+            dry_run = body.get("dry_run", True)
+            if not isinstance(mode, str):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "mode must be a string"})
+                return
+            if not isinstance(trash_ids, list) or not all(isinstance(x, str) for x in trash_ids):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "trash_ids must be a list of strings"})
+                return
+            if isinstance(older_days, bool) or not isinstance(older_days, (int, float)) or older_days < 0:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "older_days must be a non-negative number"})
+                return
+            if not isinstance(dry_run, bool):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "dry_run must be a boolean"})
+                return
+            try:
+                with self.ctx.snapshot_lock:
+                    resp = purge_trash_items(
+                        self.ctx.env,
+                        self.ctx.snapshot,
+                        mode,
+                        trash_ids,
+                        float(older_days),
+                        dry_run,
+                        self.ctx.broker,
+                        self.ctx.history,
+                    )
+                self._send_json(HTTPStatus.OK, resp)
+            except UnknownTargetError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            except LiveLockError as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": str(exc)})
+            except RuntimeError as exc:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
             return
 
         if route == "/api/duplicates":

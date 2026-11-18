@@ -17,7 +17,7 @@ Key repository entry points (read before making changes):
 Key code & runtime paths:
 - `src/mac_nexus/` — Pure Python 3.12+ stdlib backend (`__init__.py`, `scanner.py`, `executor.py`, `server.py`) and static frontend (`static/{index.html,styles.css,app.js}`).
 - `scripts/generate_icon.py` — Pillow + `iconutil` Retina `.icns` builder (generates `/Users/egorlabutin/Desktop/Mac Nexus.app/Contents/Resources/AppIcon.icns`).
-- `tests/test_mac_nexus.py` — Isolated pytest suite (`13` tests using `ScanEnvironment` DI).
+- `tests/test_mac_nexus.py` — Isolated pytest suite (`21` tests using `ScanEnvironment` DI).
 - `Start_Mac_Nexus.command` & `/Users/egorlabutin/Desktop/Mac Nexus.app` — One-click launchers (health check -> launch detached backend if down -> open `http://127.0.0.1:8790`).
 
 ---
@@ -36,6 +36,7 @@ Key code & runtime paths:
 3. **`LIVE LOCK` & `Orca` Worktree Enforcement**
    - Check live processes (`pgrep -x` across the 11 `MONITORED_APPS` incl. `Yandex Music` / `Яндекс Музыка`, plus `pgrep -fi rider`), active `Orca` worktrees (`orca worktree ps --limit 30 --json` + text fallback), live local service PIDs (`lsof` ports `3000`, `8768`), and open DMG mounts (`disk >= 6` only; never `disk0..disk5`).
    - Mark locked targets `locked: true` with `lock_reason`, disable selection in UI, and block backend execution with `HTTP 409`.
+   - **Smart Close HARD prohibition:** `POST /api/smart-close-clean` MUST unconditionally return `HTTP 409` for `app_key in {"orca", "vscode"}` — no `dry_run` bypass allowed. Auto-quitting `Orca.app` or VS Code destroys active worktrees and open editors.
    - When running inside an `Orca` worktree (`Orca`, Claude Code, Codex, Gemini), never move `~/Projects/<slug>` directories or modify sibling active worktrees.
 
 4. **Protected Paths & Trash-Instead-of-`rm` Discipline**

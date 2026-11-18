@@ -19,7 +19,7 @@ flowchart TB
     subgraph Backend["Mac Nexus Backend (Python 3.12+ Stdlib)"]
         SRV["server.py (NexusHTTPServer + CSRF Guard)"]
         SCN["scanner.py (Telemetry, LIVE LOCK, 6 Scanners)"]
-        EXC["executor.py (Trash Mover, SHA-256 Teleport, SSE Broker)"]
+        EXC["executor.py (Trash Mover, SHA-256 Teleport, Smart Close, Radar Action, SSE Broker)"]
         HIST["~/.local/state/mac-nexus/history.json"]
     end
 
@@ -70,10 +70,12 @@ flowchart TB
 | Вкладка / Панель | Основные возможности | Защита и поведение по умолчанию |
 |---|---|---|
 | **Orbital Telemetry Deck** | 3 реактора контуров (NVMe, SSD, SecondBrain), 5 чипов (RAM, Swap, DMG, Orca, одометр) | Учитывает macOS Purgeable и `SF_DATALESS` |
-| **01 · РАДАР ОЧИСТКИ** | Фильтры категорий, пороги проектов `14д`/`30д`/`60д`, выбор безопасных целей | `DRY-RUN` включён; цели `LIVE LOCK` невыбираемы |
-| **02 · ТЕЛЕПОРТ НА SSD** | Кандидаты `.mov`/`.mp4`/`.mkv` > 10 MiB с предпросмотром пути на SSD | Блокировка при отключённом SSD (`409`); SHA-256 + `fsync` |
-| **03 · ДУБЛИКАТЫ** | Поиск через `czkawka_cli` (`downloads`, `desktop`, `ssd_media`) | 1-й файл (`ОРИГИНАЛ / СОХРАНИТЬ`) заблокирован; копии в `~/.Trash` |
-| **04 · ПУЛЬТ КОНТУРОВ** | Статус полок `01..99`, быстрый запуск утилит и чтение `digest_latest.md` | Строгий allowlist инструментов + модальное окно Holo |
+| **01 · РАДАР ОЧИСТКИ** | Фильтры 9 категорий (`system_cache`, `app_orphans`, `ai_dev_deep`, `app_cache`, `pkg_cache` и др.), пороги `14д`/`30д`/`60д`, Smart Close для заблокированных кэшей | `DRY-RUN` включён; `Orca` и `VS Code` ЗАПРЕЩЕНЫ для Smart Close |
+| **02 · ГЛУБОКИЙ РАДАР** | X-Ray giants от 50/250/1024 MiB, sparse-aware `_physical_file_size`, Finder-reveal, Radar Action на SSD | Hotspot-файлы не удаляются, только перенос или reveal |
+| **03 · ТЕЛЕПОРТ МЕДИА** | Кандидаты `.mov`/`.mp4`/`.mkv` > 10 MiB с предпросмотром пути на SSD | Блокировка при отключённом SSD (`409`); SHA-256 + `fsync` |
+| **04 · ДУБЛИКАТЫ** | Поиск через `czkawka_cli` (`downloads`, `desktop`, `ssd_media`, `documents`) | 1-й файл (`ОРИГИНАЛ / СОХРАНИТЬ`) заблокирован; копии в `~/.Trash` |
+| **05 · КОРЗИНА** | Список `~/.Trash`, фильтрация `>30д`/`>7д`/выбранные, TCC-fallback с Finder Empty | Holo-подтверждение обязательно в боевом режиме |
+| **06 · ПУЛЬТ КОНТУРОВ** | Статус полок `01..99`, быстрый запуск утилит (`finder_trash`), чтение `digest_latest.md` | Строгий allowlist инструментов + модальное окно Holo |
 | **SSE Кибер-Терминал** | Потоковый лог `/api/events` (`[SCAN]`, `[LOCK-GUARD]`, `[SHA-256]`, `[DRY-RUN]`, `[DONE]`) | Буфер 350 строк, автоскролл, автопереподключение |
 
 ---
@@ -136,18 +138,18 @@ mac-nexus/
 │   └── zsh/
 │       └── zshenv.snippet.zsh                       # Блок ~/.zshenv для XDG и условного экспорта AI-кэшей
 ├── src/mac_nexus/                                   # Бэкенд (Python 3.12+ stdlib ONLY) и статика
-│   ├── __init__.py                                  # Метаданные APP_NAME и APP_VERSION (1.0.0)
+│   ├── __init__.py                                  # Метаданные APP_NAME и APP_VERSION (2.0.0)
 │   ├── server.py                                    # NexusHTTPServer, CSRF/Origin, REST + SSE маршрутизация
 │   ├── scanner.py                                   # ScanEnvironment DI, телеметрия, LIVE LOCK и 6 сканеров
 │   ├── executor.py                                  # DRY-RUN/боевые задачи, Trash, SHA-256 телепорт, EventBroker
 │   └── static/                                      # Автономный Cyber-HUD (0 внешних CDN)
-│       ├── index.html                               # 4 командные вкладки, реакторы, терминал и голо-окно
+│       ├── index.html                               # 6 командных вкладок, реакторы, терминал и голо-окно (792 строки)
 │       ├── styles.css                               # Неоновая палитра, сетка, [hidden]-инвариант
 │       └── app.js                                   # Canvas/SVG-анимации, fetch + CSRF, EventSource, escapeHtml
 ├── scripts/
 │   └── generate_icon.py                             # Генератор 1024px Retina .icns через Pillow + iconutil
 └── tests/
-    └── test_mac_nexus.py                            # 13 pytest-тестов безопасности, LIVE LOCK, SHA-256 и SSE
+    └── test_mac_nexus.py                            # 21 pytest-тест: безопасность, LIVE LOCK, SHA-256, SSE, v2.0.0
 ```
 
 Состояние выполнения и журнал логов сохраняются строго вне репозитория в `~/.local/state/mac-nexus/` (`history.json`, `server.log`).
@@ -208,7 +210,7 @@ mac-nexus/
 ## Проверка, тестирование и линтинг
 
 ```zsh
-# 1. Полный набор unit и интеграционных тестов (13/13)
+# 1. Полный набор unit и интеграционных тестов (21/21)
 cd /Users/egorlabutin/Projects/mac-nexus
 PYTHONPATH=src /opt/anaconda3/bin/python3 -m pytest -v
 

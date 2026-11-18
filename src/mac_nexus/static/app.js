@@ -7,11 +7,25 @@
 
   const CATEGORY_LABELS = {
     all: 'Все',
-    pkg_cache: 'Пакетные кэши',
-    app_cache: 'Кэши программ',
-    downloads_inbox: 'Downloads Inbox',
-    dev_projects: 'Проекты ~/Projects',
-    ghost_dmgs: 'Образы DMG',
+    ai_dev_deep: 'AI & Dev',
+    system_cache: 'Система и кэши',
+    app_orphans: 'Сироты программ',
+    app_cache: 'Приложения',
+    pkg_cache: 'Пакеты',
+    downloads_inbox: 'Downloads',
+    dev_projects: 'Проекты',
+    ghost_dmgs: 'DMG',
+  };
+
+  const CATEGORY_TONES = {
+    ai_dev_deep: 'tag-pill--violet',
+    system_cache: 'tag-pill--cyan',
+    app_orphans: 'tag-pill--amber',
+    app_cache: 'tag-pill--cyan',
+    pkg_cache: 'tag-pill--emerald',
+    downloads_inbox: 'tag-pill--cyan',
+    dev_projects: 'tag-pill--violet',
+    ghost_dmgs: 'tag-pill--amber',
   };
 
   const RISK_META = {
@@ -29,6 +43,7 @@
     detach: 'Отмонтировать DMG',
     organize: 'Organize',
     rm_artifact: 'Удаление артефакта',
+    docker_prune: 'Docker Prune',
   };
 
   const PRESSURE_LABELS = {
@@ -45,7 +60,12 @@
     activeCategory: 'all',
     dupTarget: 'downloads',
 
+    deepMinMb: 50,
+    deepView: 'all',
+
     isScanning: false,
+    isDeepScanning: false,
+    isTrashLoading: false,
     isTransferring: false,
     isDupScanning: false,
     activeJobId: null,
@@ -53,11 +73,15 @@
 
     telemetry: null,
     scanData: null,
+    deepRadarData: null,
     dupData: null,
+    trashData: null,
 
     selectedItemIds: new Set(),
+    selectedDeepIds: new Set(),
     selectedMediaIds: new Set(),
     selectedDupFileIds: new Set(),
+    selectedTrashIds: new Set(),
 
     odometerTargetBytes: 0,
     odometerDisplayBytes: 0,
@@ -548,6 +572,7 @@
     }
 
     $('ssd-unmounted-alert').hidden = ssdMounted;
+    $('deep-ssd-unmounted-alert').hidden = ssdMounted;
 
     // Reactor 3: SecondBrain iCloud
     const sbMounted = Boolean(sb.mounted);
@@ -617,7 +642,16 @@
     }
     $('odometer-sub').textContent = `Последний запуск: ${formatDateTime(hist.last_run_at)}`;
 
-    // Tab 4 Shelves & Plane Details
+    // Trash badge preview from telemetry if full trash scan hasn't finished yet
+    if (data?.trash && !state.trashData) {
+      $('badge-tab-trash').textContent = String(safeNum(data.trash.item_count, 0));
+      $('trash-sum-count').textContent = String(safeNum(data.trash.item_count, 0));
+      $('trash-sum-total').textContent = data.trash.tcc_restricted
+        ? 'TCC защита'
+        : formatGiB(data.trash.total_bytes);
+    }
+
+    // Tab 6 Shelves & Plane Details
     renderPlanesControlTab(data);
     updateActionButtonsState();
   }
@@ -684,8 +718,10 @@
     const html = filtered.map((item) => {
       const id = String(item.id || '');
       const locked = Boolean(item.locked);
+      const quittable = Boolean(item.quittable);
       const selected = !locked && state.selectedItemIds.has(id);
       const catLabel = CATEGORY_LABELS[item.category] || item.category || 'Кандидат';
+      const catTone = CATEGORY_TONES[item.category] || 'tag-pill--cyan';
       const riskObj = RISK_META[String(item.risk || 'low').toLowerCase()] || RISK_META.low;
       const actionLabel = ACTION_LABELS[item.action_kind] || item.action_kind || 'Очистка';
       const ageDays = item.age_days !== null && item.age_days !== undefined ? `${safeNum(item.age_days)} дн.` : null;
@@ -705,7 +741,7 @@
             <div class="item-top-row">
               <span class="item-title">${escapeHtml(item.title || id)}</span>
               ${locked ? '<span class="live-lock-badge"><span class="live-lock-dot"></span>LIVE LOCK</span>' : ''}
-              <span class="tag-pill tag-pill--cyan">${escapeHtml(catLabel)}</span>
+              <span class="tag-pill ${escapeHtml(catTone)}">${escapeHtml(catLabel)}</span>
               <span class="tag-pill ${escapeHtml(riskObj.cls)}">${escapeHtml(riskObj.label)}</span>
               <span class="tag-pill">${escapeHtml(actionLabel)}</span>
               ${ageDays ? `<span class="tag-pill">${escapeHtml(ageDays)}</span>` : ''}
@@ -714,6 +750,11 @@
             ${item.subtitle ? `<div class="item-subtitle">${escapeHtml(item.subtitle)}</div>` : ''}
             ${item.path ? `<div class="item-path" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}</div>` : ''}
             ${locked ? `<div class="lock-reason-box">Защита процесса: ${escapeHtml(item.lock_reason || 'Приложение или Orca worktree активно в данный момент')}</div>` : ''}
+            ${locked && quittable ? `
+              <div class="item-card-actions">
+                <button type="button" class="btn-cyber btn-cyber--cyan btn-xs js-smart-close-btn" data-id="${escapeHtml(id)}" ${state.isTransferring ? 'disabled' : ''}>⚡ Закрыть, очистить и перезапустить</button>
+              </div>
+            ` : ''}
           </div>
           <div class="item-right">
             <span class="item-size">${escapeHtml(formatGiB(item.size_bytes))}</span>
@@ -739,6 +780,151 @@
     }
     $('radar-selected-count').textContent = String(selectedCount);
     $('radar-selected-bytes').textContent = formatGiB(selectedBytes);
+    updateActionButtonsState();
+  }
+
+  /* ------------------------------------------------------------------------
+     Tab 2: ГЛУБОКИЙ РАДАР (X-Ray & Heavy Files)
+     ------------------------------------------------------------------------ */
+  function getDeepItemId(item) {
+    return String(item?.id || item?.radar_id || '');
+  }
+
+  function isDeepMovable(item) {
+    return Boolean(item?.can_trash || item?.can_teleport);
+  }
+
+  function renderDeepRadar() {
+    const listEl = $('deep-radar-list');
+    if (!listEl) return;
+
+    const data = state.deepRadarData;
+    const allItems = Array.isArray(data?.items) ? data.items : [];
+    const summary = data?.summary || {};
+    const movableItems = allItems.filter(isDeepMovable);
+    const hotspotItems = allItems.filter((it) => !isDeepMovable(it));
+
+    $('badge-tab-deepradar').textContent = String(allItems.length);
+    $('deep-sum-count').textContent = data
+      ? `${safeNum(summary.count, allItems.length)} (${formatGiB(summary.total_bytes)})`
+      : '0';
+    $('deep-sum-movable').textContent = data
+      ? `${formatGiB(summary.movable_bytes)} (${movableItems.length})`
+      : '0 Б';
+    $('deep-sum-hotspot').textContent = data
+      ? `${formatGiB(summary.hotspot_bytes)} (${hotspotItems.length})`
+      : '0 Б';
+
+    if (!data) {
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <strong>Глубокий X-Ray радар готовится к сканированию</strong>
+          <span>Выберите порог (50 МБ / 250 МБ / 1 ГБ) и нажмите «Сканировать гигантов».</span>
+        </div>`;
+      updateDeepDockStats();
+      return;
+    }
+
+    const filtered = state.deepView === 'movable'
+      ? movableItems
+      : state.deepView === 'hotspot'
+        ? hotspotItems
+        : allItems;
+
+    if (filtered.length === 0) {
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <strong>Объекты не найдены для выбранного фильтра</strong>
+          <span>Попробуйте выбрать фильтр «Все» или снизить порог до 50 МБ.</span>
+        </div>`;
+      updateDeepDockStats();
+      return;
+    }
+
+    const html = filtered.map((item) => {
+      const rid = getDeepItemId(item);
+      const movable = isDeepMovable(item);
+      const selected = movable && state.selectedDeepIds.has(rid);
+      const sizeBytes = safeNum(item.size_bytes, 0);
+      const logicalBytes = safeNum(item.logical_bytes, sizeBytes);
+      const isSparse = logicalBytes > sizeBytes * 1.2;
+      const ageDays = item.age_days !== null && item.age_days !== undefined ? `${safeNum(item.age_days)} дн.` : null;
+      const displayPath = item.path || item.rel_path || '';
+      const kindLabel = item.kind === 'directory' ? 'ПАПКА' : item.kind === 'file' ? 'ФАЙЛ' : 'HOTSPOT';
+
+      if (!movable) {
+        return `
+          <article class="item-card item-card--xray" data-radar-id="${escapeHtml(rid)}">
+            <div class="xray-icon-slot" title="Только анализ X-Ray" aria-hidden="true">X</div>
+            <div class="item-main">
+              <div class="item-top-row">
+                <span class="item-title">${escapeHtml(item.title || item.rel_path || rid)}</span>
+                <span class="xray-badge">X-RAY / ТОЛЬКО АНАЛИЗ</span>
+                ${isSparse ? `<span class="tag-pill tag-pill--cyan">${escapeHtml(formatGiB(sizeBytes))} физ. / ${escapeHtml(formatGiB(logicalBytes))} sparse</span>` : ''}
+                ${ageDays ? `<span class="tag-pill">${escapeHtml(ageDays)}</span>` : ''}
+              </div>
+              ${displayPath ? `<div class="item-path" title="${escapeHtml(displayPath)}">${escapeHtml(displayPath)}</div>` : ''}
+              ${item.note ? `<div class="xray-note-box">${escapeHtml(item.note)}</div>` : ''}
+              <div class="item-card-actions">
+                <button type="button" class="btn-cyber btn-cyber--ghost btn-xs js-radar-reveal-btn" data-id="${escapeHtml(rid)}">Показать в Finder</button>
+              </div>
+            </div>
+            <div class="item-right">
+              <span class="item-size">${escapeHtml(formatGiB(sizeBytes))}</span>
+              <span class="item-size-sub">${isSparse ? `${escapeHtml(formatGiB(logicalBytes))} sparse` : escapeHtml(formatGB(sizeBytes))}</span>
+            </div>
+          </article>
+        `;
+      }
+
+      return `
+        <article class="item-card ${selected ? 'is-selected' : ''}" data-radar-id="${escapeHtml(rid)}">
+          <input
+            type="checkbox"
+            class="item-checkbox js-deep-check"
+            data-id="${escapeHtml(rid)}"
+            ${selected ? 'checked' : ''}
+            aria-label="${escapeHtml(item.title || item.rel_path || rid)}"
+          />
+          <div class="item-main">
+            <div class="item-top-row">
+              <span class="item-title">${escapeHtml(item.title || item.rel_path || rid)}</span>
+              <span class="tag-pill tag-pill--cyan">${escapeHtml(kindLabel)}</span>
+              ${item.default_shelf ? `<span class="tag-pill tag-pill--violet">${escapeHtml(item.default_shelf)}</span>` : ''}
+              ${isSparse ? `<span class="tag-pill tag-pill--amber">sparse (${escapeHtml(formatGiB(logicalBytes))} лог.)</span>` : ''}
+              ${ageDays ? `<span class="tag-pill">${escapeHtml(ageDays)}</span>` : ''}
+            </div>
+            ${displayPath ? `<div class="item-path" title="${escapeHtml(displayPath)}">${escapeHtml(displayPath)}</div>` : ''}
+            ${item.note ? `<div class="deep-note-text">${escapeHtml(item.note)}</div>` : ''}
+            <div class="item-card-actions">
+              <button type="button" class="btn-cyber btn-cyber--ghost btn-xs js-radar-reveal-btn" data-id="${escapeHtml(rid)}">Показать в Finder</button>
+            </div>
+          </div>
+          <div class="item-right">
+            <span class="item-size">${escapeHtml(formatGiB(sizeBytes))}</span>
+            <span class="item-size-sub">${isSparse ? `${escapeHtml(formatGiB(logicalBytes))} лог.` : escapeHtml(formatGB(sizeBytes))}</span>
+          </div>
+        </article>
+      `;
+    }).join('');
+
+    listEl.innerHTML = html;
+    updateDeepDockStats();
+  }
+
+  function updateDeepDockStats() {
+    const allItems = Array.isArray(state.deepRadarData?.items) ? state.deepRadarData.items : [];
+    let selectedBytes = 0;
+    let selectedCount = 0;
+    for (const item of allItems) {
+      const rid = getDeepItemId(item);
+      if (isDeepMovable(item) && state.selectedDeepIds.has(rid)) {
+        selectedCount += 1;
+        selectedBytes += safeNum(item.size_bytes, 0);
+      }
+    }
+    $('deep-selected-count').textContent = String(selectedCount);
+    $('deep-selected-bytes').textContent = formatGiB(selectedBytes);
     updateActionButtonsState();
   }
 
@@ -839,7 +1025,7 @@
       listEl.innerHTML = `
         <div class="empty-state">
           <strong>Поиск дубликатов ещё не запускался</strong>
-          <span>Выберите контур (Downloads, Desktop или SSD Media) и нажмите «Сканировать дубликаты».</span>
+          <span>Выберите контур (Downloads, Desktop, Documents или SSD Media) и нажмите «Сканировать дубликаты».</span>
         </div>`;
       updateDupDockStats();
       return;
@@ -921,7 +1107,118 @@
   }
 
   /* ------------------------------------------------------------------------
-     Tab 4: ПУЛЬТ КОНТУРОВ
+     Tab 5: КОРЗИНА (~/.Trash & TCC Fallback)
+     ------------------------------------------------------------------------ */
+  function getTrashItemId(item) {
+    return String(item?.id || item?.trash_id || '');
+  }
+
+  function renderTrash() {
+    const listEl = $('trash-items-list');
+    const tccBanner = $('trash-tcc-banner');
+    const dockEl = $('trash-action-dock');
+    if (!listEl) return;
+
+    const data = state.trashData;
+    if (!data) {
+      if (tccBanner) tccBanner.hidden = true;
+      if (dockEl) dockEl.hidden = false;
+      listEl.hidden = false;
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <strong>Анализ Корзины ещё не выполнен</strong>
+          <span>Нажмите «Обновить Корзину» для проверки ~/.Trash.</span>
+        </div>`;
+      updateTrashDockStats();
+      return;
+    }
+
+    const tcc = Boolean(data.tcc_restricted);
+    const items = Array.isArray(data.items) ? data.items : [];
+    const finderCount = safeNum(data.finder_item_count, safeNum(data.item_count, 0));
+    const itemCount = tcc ? finderCount : safeNum(data.item_count, items.length);
+
+    $('badge-tab-trash').textContent = String(itemCount);
+    $('trash-sum-total').textContent = tcc ? 'TCC защита' : formatGiB(data.total_bytes);
+    $('trash-sum-count').textContent = String(itemCount);
+    $('trash-sum-7d').textContent = tcc ? 'Через Finder' : formatGiB(data.older_7d_bytes);
+    $('trash-sum-30d').textContent = tcc ? 'Через Finder' : formatGiB(data.older_30d_bytes);
+
+    if (tccBanner) tccBanner.hidden = !tcc;
+    $('trash-tcc-count').textContent = String(finderCount);
+    listEl.hidden = tcc;
+    if (dockEl) dockEl.hidden = tcc;
+
+    if (tcc) {
+      updateTrashDockStats();
+      return;
+    }
+
+    if (items.length === 0) {
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <strong>Корзина ~/.Trash пуста</strong>
+          <span>Нет файлов и папок, ожидающих безвозвратного удаления.</span>
+        </div>`;
+      updateTrashDockStats();
+      return;
+    }
+
+    const html = items.map((item) => {
+      const tid = getTrashItemId(item);
+      const selected = state.selectedTrashIds.has(tid);
+      const isDir = Boolean(item.is_dir);
+      const ageDays = safeNum(item.age_days, 0);
+      const ageTone = ageDays >= 30 ? 'tag-pill--crimson' : ageDays >= 7 ? 'tag-pill--amber' : '';
+      const mtimeVal = item.mtime || item.mtime_ts;
+
+      return `
+        <article class="item-card ${selected ? 'is-selected' : ''}" data-trash-id="${escapeHtml(tid)}">
+          <input
+            type="checkbox"
+            class="item-checkbox js-trash-check"
+            data-id="${escapeHtml(tid)}"
+            ${selected ? 'checked' : ''}
+            aria-label="${escapeHtml(item.name || tid)}"
+          />
+          <div class="item-main">
+            <div class="item-top-row">
+              <span class="item-title">${escapeHtml(item.name || tid)}</span>
+              <span class="tag-pill ${isDir ? 'tag-pill--violet' : 'tag-pill--cyan'}">${isDir ? 'ПАПКА' : 'ФАЙЛ'}</span>
+              <span class="tag-pill ${escapeHtml(ageTone)}">${escapeHtml(ageDays.toFixed(1))} дн.</span>
+              ${mtimeVal ? `<span class="tag-pill">${escapeHtml(formatDateTime(mtimeVal))}</span>` : ''}
+            </div>
+            ${item.path ? `<div class="item-path" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}</div>` : ''}
+          </div>
+          <div class="item-right">
+            <span class="item-size">${escapeHtml(formatGiB(item.size_bytes))}</span>
+            <span class="item-size-sub">${escapeHtml(formatGB(item.size_bytes))}</span>
+          </div>
+        </article>
+      `;
+    }).join('');
+
+    listEl.innerHTML = html;
+    updateTrashDockStats();
+  }
+
+  function updateTrashDockStats() {
+    const items = Array.isArray(state.trashData?.items) ? state.trashData.items : [];
+    let selectedBytes = 0;
+    let selectedCount = 0;
+    for (const item of items) {
+      if (state.selectedTrashIds.has(getTrashItemId(item))) {
+        selectedCount += 1;
+        selectedBytes += safeNum(item.size_bytes, 0);
+      }
+    }
+    $('trash-selected-count').textContent = String(selectedCount);
+    $('trash-selected-bytes').textContent = formatGiB(selectedBytes);
+    updateActionButtonsState();
+  }
+
+  /* ------------------------------------------------------------------------
+     Tab 6: ПУЛЬТ КОНТУРОВ
      ------------------------------------------------------------------------ */
   function renderPlanesControlTab(data) {
     const planes = data?.planes || {};
@@ -1023,7 +1320,9 @@
     const toggleBtn = $('dry-run-toggle');
     const stateLabel = $('dry-run-state-label');
     const radarHint = $('radar-mode-hint');
+    const deepHint = $('deep-mode-hint');
     const teleportHint = $('teleport-mode-hint');
+    const trashHint = $('trash-mode-hint');
 
     if (toggleBtn) {
       toggleBtn.setAttribute('aria-checked', state.dryRun ? 'true' : 'false');
@@ -1035,13 +1334,12 @@
     }
 
     const hintText = state.dryRun ? 'DRY-RUN СИМУЛЯЦИЯ' : 'БОЕВОЕ ВЫПОЛНЕНИЕ';
-    if (radarHint) {
-      radarHint.textContent = hintText;
-      radarHint.className = `dock-mode-tag ${state.dryRun ? 'dock-mode-tag--safe' : 'dock-mode-tag--live'}`;
-    }
-    if (teleportHint) {
-      teleportHint.textContent = hintText;
-      teleportHint.className = `dock-mode-tag ${state.dryRun ? 'dock-mode-tag--safe' : 'dock-mode-tag--live'}`;
+    const hintCls = `dock-mode-tag ${state.dryRun ? 'dock-mode-tag--safe' : 'dock-mode-tag--live'}`;
+    for (const hintEl of [radarHint, deepHint, teleportHint, trashHint]) {
+      if (hintEl) {
+        hintEl.textContent = hintText;
+        hintEl.className = hintCls;
+      }
     }
 
     const cleanLabel = $('btn-execute-clean-label');
@@ -1055,13 +1353,24 @@
     const offloadBtn = $('btn-execute-offload');
     const trashDupBtn = $('btn-trash-duplicates');
     const scanDupBtn = $('btn-scan-duplicates');
+    const scanDeepBtn = $('btn-scan-deepradar');
+    const deepTrashBtn = $('btn-radar-trash');
+    const deepTeleportBtn = $('btn-radar-teleport');
+    const refreshTrashBtn = $('btn-refresh-trash');
+    const purge30Btn = $('btn-purge-trash-30d');
+    const purge7Btn = $('btn-purge-trash-7d');
+    const selectTrash7Btn = $('btn-select-trash-7d');
+    const clearTrashBtn = $('btn-clear-trash-selection');
+    const purgeTrashSelBtn = $('btn-purge-trash-selected');
+    const finderEmptyBtn = $('btn-trash-finder-empty');
+
+    const ssdMounted = Boolean(state.telemetry?.planes?.ssd?.mounted);
+    const blockedNoSsd = !ssdMounted && !state.dryRun;
 
     if (cleanBtn) {
       cleanBtn.disabled = state.selectedItemIds.size === 0 || state.isTransferring;
     }
     if (offloadBtn) {
-      const ssdMounted = Boolean(state.telemetry?.planes?.ssd?.mounted);
-      const blockedNoSsd = !ssdMounted && !state.dryRun;
       offloadBtn.disabled = state.selectedMediaIds.size === 0 || state.isTransferring || blockedNoSsd;
     }
     if (trashDupBtn) {
@@ -1070,6 +1379,43 @@
     if (scanDupBtn) {
       scanDupBtn.disabled = state.isDupScanning;
     }
+
+    // Deep Radar buttons
+    if (scanDeepBtn) {
+      scanDeepBtn.disabled = state.isDeepScanning;
+    }
+    const deepItems = Array.isArray(state.deepRadarData?.items) ? state.deepRadarData.items : [];
+    const selectedDeepItems = deepItems.filter((it) => state.selectedDeepIds.has(getDeepItemId(it)));
+    const allDeepTrashable = selectedDeepItems.length > 0 && selectedDeepItems.every((it) => Boolean(it.can_trash));
+    const anyDeepTeleportable = selectedDeepItems.some((it) => Boolean(it.can_teleport));
+    if (deepTrashBtn) {
+      deepTrashBtn.disabled = !allDeepTrashable || state.isTransferring || state.isDeepScanning;
+    }
+    if (deepTeleportBtn) {
+      deepTeleportBtn.disabled = selectedDeepItems.length === 0 || !anyDeepTeleportable || state.isTransferring || state.isDeepScanning || blockedNoSsd;
+    }
+
+    // Trash buttons
+    const trashTcc = Boolean(state.trashData?.tcc_restricted);
+    if (refreshTrashBtn) {
+      refreshTrashBtn.disabled = state.isTrashLoading;
+    }
+    for (const btn of [purge30Btn, purge7Btn, selectTrash7Btn, clearTrashBtn]) {
+      if (btn) {
+        btn.disabled = trashTcc || state.isTransferring || state.isTrashLoading || !state.trashData;
+      }
+    }
+    if (purgeTrashSelBtn) {
+      purgeTrashSelBtn.disabled = trashTcc || state.selectedTrashIds.size === 0 || state.isTransferring || state.isTrashLoading;
+    }
+    if (finderEmptyBtn) {
+      finderEmptyBtn.disabled = state.isTransferring;
+    }
+
+    // Disable Smart Close buttons during active transfer without re-rendering list
+    document.querySelectorAll('.js-smart-close-btn').forEach((btn) => {
+      btn.disabled = state.isTransferring;
+    });
 
     const beamCard = $('teleport-beam-panel');
     if (beamCard) {
@@ -1231,6 +1577,8 @@
         updateActionButtonsState();
         refreshTelemetry();
         runScan({ silent: true });
+        loadDeepRadar({ silent: true });
+        loadTrash({ silent: true });
       }
     };
 
@@ -1643,6 +1991,301 @@
     }
   }
 
+  function openSmartCloseModal(item) {
+    if (!item || !item.locked || !item.quittable || state.isTransferring) return;
+    const id = String(item.id || '');
+    const appKey = String(item.app_key || item.quit_app_name || item.title || id);
+
+    const box = document.createElement('div');
+    box.className = 'confirm-box';
+
+    const banner = document.createElement('div');
+    banner.className = state.dryRun ? 'confirm-notice' : 'confirm-warning';
+    banner.textContent = state.dryRun
+      ? `DRY-RUN симуляция: приложение ${appKey} НЕ будет закрыто, кэши НЕ будут удалены.`
+      : `БОЕВОЙ РЕЖИМ: приложение ${appKey} будет корректно закрыто для сброса SQLite WAL, кэши очистятся, затем приложение будет перезапущено.`;
+    box.appendChild(banner);
+
+    const detail = document.createElement('p');
+    detail.className = 'digest-p';
+    detail.textContent = `Целевое приложение: ${item.title || appKey} (app_key: ${appKey}). Освобождаемый кэш: ${formatGiB(item.size_bytes)}. После очистки будет выполнен перезапуск (reopen: true).`;
+    box.appendChild(detail);
+
+    if (item.browser_warning) {
+      const amberWarn = document.createElement('div');
+      amberWarn.className = 'confirm-amber-warning';
+      amberWarn.textContent = 'Внимание: будут закрыты открытые окна/вкладки браузера — перед перезапуском убедитесь, что важные формы сохранены';
+      box.appendChild(amberWarn);
+    }
+
+    openHoloModal({
+      eyebrow: state.dryRun ? 'SMART CLOSE & CLEAN · DRY-RUN' : 'SMART CLOSE & CLEAN · LIVE',
+      title: `Закрыть, очистить и перезапустить: ${item.quit_app_name || appKey}`,
+      contentNode: box,
+      confirmMode: true,
+      confirmLabel: state.dryRun ? 'ЗАПУСТИТЬ DRY-RUN' : 'ЗАКРЫТЬ И ОЧИСТИТЬ',
+      onConfirm: () => {
+        closeHoloModal();
+        executeSmartCloseClean(id, item);
+      },
+    });
+  }
+
+  async function executeSmartCloseClean(itemId, item) {
+    if (!itemId || state.isTransferring) return;
+    state.isTransferring = true;
+    state.activeJobKind = 'smart_close';
+    setTerminalExpanded(true);
+    updateActionButtonsState();
+
+    const label = item?.quit_app_name || item?.app_key || itemId;
+    appendTerminalLog({
+      type: 'log',
+      message: `${state.dryRun ? '[DRY-RUN]' : '[LOCK-GUARD]'} Smart Close & Clean для ${label} (reopen=true)...`,
+    });
+
+    try {
+      const res = await apiPost('/api/smart-close-clean', {
+        item_id: itemId,
+        reopen: true,
+        dry_run: state.dryRun,
+      });
+      state.activeJobId = res.job_id || null;
+      showToast(
+        state.dryRun
+          ? `Smart Close симуляция запущена (${label})`
+          : `Smart Close & Clean запущен (${label})`,
+        'info'
+      );
+      window.setTimeout(() => {
+        if (state.isTransferring && state.activeJobId === (res.job_id || null)) {
+          state.isTransferring = false;
+          state.activeJobKind = null;
+          updateActionButtonsState();
+          refreshTelemetry();
+          runScan({ silent: true });
+        }
+      }, 25000);
+    } catch (err) {
+      state.isTransferring = false;
+      state.activeJobKind = null;
+      updateActionButtonsState();
+      showToast(`Ошибка Smart Close: ${err.message}`, 'error');
+      appendTerminalLog({ type: 'error', message: `[ERROR] /api/smart-close-clean: ${err.message}` });
+    }
+  }
+
+  async function loadDeepRadar({ silent = false } = {}) {
+    if (state.isDeepScanning) return;
+    state.isDeepScanning = true;
+    updateActionButtonsState();
+
+    const listEl = $('deep-radar-list');
+    if (!silent && listEl) {
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <strong>Сканирование крупных объектов (&ge; ${escapeHtml(state.deepMinMb)} МБ)...</strong>
+          <span>Анализ файлов и системных гигантов с учётом sparse APFS блоков.</span>
+        </div>`;
+      appendTerminalLog({ type: 'log', message: `[SCAN] Глубокий радар (min_mb=${state.deepMinMb})...` });
+    }
+
+    try {
+      const data = await apiGet(`/api/deep-radar?min_mb=${encodeURIComponent(state.deepMinMb)}`);
+      state.deepRadarData = data;
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const movableIds = new Set(items.filter(isDeepMovable).map(getDeepItemId));
+      for (const id of Array.from(state.selectedDeepIds)) {
+        if (!movableIds.has(id)) state.selectedDeepIds.delete(id);
+      }
+
+      renderDeepRadar();
+      if (!silent) {
+        appendTerminalLog({
+          type: 'log',
+          message: `[SCAN] Глубокий радар завершён: найдено ${items.length} объектов (${formatGiB(data?.summary?.total_bytes)})`,
+        });
+      }
+    } catch (err) {
+      if (!silent) {
+        showToast(`Ошибка Глубокого радара: ${err.message}`, 'error');
+      }
+      appendTerminalLog({ type: 'error', message: `[ERROR] /api/deep-radar: ${err.message}` });
+      renderDeepRadar();
+    } finally {
+      state.isDeepScanning = false;
+      updateActionButtonsState();
+    }
+  }
+
+  async function revealRadarItem(radarId) {
+    if (!radarId) return;
+    try {
+      await apiPost('/api/radar-reveal', { radar_id: radarId });
+      showToast('Объект показан в Finder', 'success');
+      appendTerminalLog({ type: 'log', message: `[DONE] Открыто в Finder (${radarId})` });
+    } catch (err) {
+      showToast(`Не удалось показать в Finder: ${err.message}`, 'error');
+      appendTerminalLog({ type: 'error', message: `[ERROR] /api/radar-reveal: ${err.message}` });
+    }
+  }
+
+  async function executeRadarAction(action) {
+    const radarIds = Array.from(state.selectedDeepIds);
+    if (radarIds.length === 0 || state.isTransferring) return;
+
+    const shelfEl = $('radar-shelf-select');
+    const shelf = shelfEl ? shelfEl.value : '90_Cold_Archive';
+
+    if (action === 'teleport_ssd') {
+      const items = Array.isArray(state.deepRadarData?.items) ? state.deepRadarData.items : [];
+      const byId = new Map(items.map((it) => [getDeepItemId(it), it]));
+      const hasDirectory = radarIds.some((id) => !byId.get(id)?.can_teleport);
+      if (hasDirectory) {
+        showToast('Телепорт SHA-256 доступен только для отдельных файлов (снимите выделение с папок)', 'warn');
+        return;
+      }
+    }
+
+    state.isTransferring = true;
+    state.activeJobKind = 'radar_action';
+    setTerminalExpanded(true);
+    updateActionButtonsState();
+
+    appendTerminalLog({
+      type: 'log',
+      message: `${state.dryRun ? '[DRY-RUN]' : action === 'teleport_ssd' ? '[SHA-256]' : '[LOCK-GUARD]'} Глубокий радар (${action} -> ${shelf}): ${radarIds.length} объектов...`,
+    });
+
+    try {
+      const res = await apiPost('/api/radar-action', {
+        radar_ids: radarIds,
+        action,
+        shelf,
+        dry_run: state.dryRun,
+      });
+      state.activeJobId = res.job_id || null;
+      showToast(
+        state.dryRun
+          ? `Симуляция (${action}) запущена`
+          : action === 'teleport_ssd'
+            ? `Телепорт на полку ${shelf} запущен`
+            : 'Перемещение в Корзину запущено',
+        'info'
+      );
+      if (!state.dryRun) {
+        state.selectedDeepIds.clear();
+        renderDeepRadar();
+      }
+      window.setTimeout(() => {
+        if (state.isTransferring && state.activeJobId === (res.job_id || null)) {
+          state.isTransferring = false;
+          state.activeJobKind = null;
+          updateActionButtonsState();
+          refreshTelemetry();
+          loadDeepRadar({ silent: true });
+          loadTrash({ silent: true });
+        }
+      }, 30000);
+    } catch (err) {
+      state.isTransferring = false;
+      state.activeJobKind = null;
+      updateActionButtonsState();
+      showToast(`Ошибка операции радара: ${err.message}`, 'error');
+      appendTerminalLog({ type: 'error', message: `[ERROR] /api/radar-action: ${err.message}` });
+    }
+  }
+
+  async function loadTrash({ silent = false } = {}) {
+    if (state.isTrashLoading) return;
+    state.isTrashLoading = true;
+    updateActionButtonsState();
+
+    if (!silent) {
+      appendTerminalLog({ type: 'log', message: '[SCAN] Проверка состояния ~/.Trash...' });
+    }
+
+    try {
+      const data = await apiGet('/api/trash');
+      state.trashData = data;
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const validIds = new Set(items.map(getTrashItemId));
+      for (const id of Array.from(state.selectedTrashIds)) {
+        if (!validIds.has(id)) state.selectedTrashIds.delete(id);
+      }
+
+      renderTrash();
+      if (!silent) {
+        const msg = data?.tcc_restricted
+          ? `[LOCK-GUARD] TCC защита ~/.Trash активна (объектов в Finder: ${safeNum(data.finder_item_count, safeNum(data.item_count, 0))})`
+          : `[SCAN] Корзина: ${items.length} объектов (${formatGiB(data?.total_bytes)})`;
+        appendTerminalLog({ type: 'log', message: msg });
+      }
+    } catch (err) {
+      if (!silent) {
+        showToast(`Ошибка чтения Корзины: ${err.message}`, 'error');
+      }
+      appendTerminalLog({ type: 'error', message: `[ERROR] /api/trash: ${err.message}` });
+      renderTrash();
+    } finally {
+      state.isTrashLoading = false;
+      updateActionButtonsState();
+    }
+  }
+
+  async function executeEmptyTrash({ mode, trashIds = [], olderDays = 30 }) {
+    if (state.isTransferring) return;
+    state.isTransferring = true;
+    updateActionButtonsState();
+    setTerminalExpanded(true);
+
+    try {
+      const res = await apiPost('/api/empty-trash', {
+        mode,
+        trash_ids: trashIds,
+        older_days: olderDays,
+        dry_run: state.dryRun,
+      });
+
+      const purgedCount = safeNum(res.purged_count, 0);
+      const reclaimed = safeNum(res.reclaimed_bytes, 0);
+
+      if (res.dry_run) {
+        const previewMsg = res.message
+          || `[DRY-RUN] Корзина (${mode}): к безвозвратному удалению ${purgedCount} объектов (${formatGiB(reclaimed)})`;
+        showToast(previewMsg, 'info');
+        if (!state.eventSource || state.eventSource.readyState !== 1) {
+          appendTerminalLog({ type: 'log', message: previewMsg });
+        }
+      } else {
+        const doneText = mode === 'finder_empty'
+          ? 'Команда очистки Корзины передана в Finder'
+          : `Удалено навсегда: ${purgedCount} объектов (${formatGiB(reclaimed)})`;
+        showToast(doneText, 'success');
+        if (!state.eventSource || state.eventSource.readyState !== 1) {
+          appendTerminalLog({
+            type: reclaimed > 0 ? 'reclaimed' : 'done',
+            message: `[DONE] ${doneText}`,
+            bytes: reclaimed,
+          });
+        }
+        if (mode === 'selected') {
+          state.selectedTrashIds.clear();
+        }
+        await refreshTelemetry();
+        await loadTrash({ silent: true });
+      }
+    } catch (err) {
+      showToast(`Ошибка очистки Корзины: ${err.message}`, 'error');
+      appendTerminalLog({ type: 'error', message: `[ERROR] /api/empty-trash: ${err.message}` });
+    } finally {
+      state.isTransferring = false;
+      updateActionButtonsState();
+    }
+  }
+
   /* ------------------------------------------------------------------------
      Tab Navigation & Event Bindings
      ------------------------------------------------------------------------ */
@@ -1659,6 +2302,13 @@
       const match = panel.id === `panel-${tabId}`;
       panel.classList.toggle('is-active', match);
       panel.hidden = !match;
+    }
+
+    if (tabId === 'deepradar' && !state.deepRadarData && !state.isDeepScanning) {
+      loadDeepRadar({ silent: true });
+    }
+    if (tabId === 'trash' && !state.trashData && !state.isTrashLoading) {
+      loadTrash({ silent: true });
     }
   }
 
@@ -1686,6 +2336,8 @@
       checkHealth();
       refreshTelemetry();
       runScan();
+      loadDeepRadar({ silent: true });
+      loadTrash({ silent: true });
     });
 
     // Category filter chips
@@ -1696,13 +2348,13 @@
       renderRadarItems();
     });
 
-    // Age selector
-    document.querySelectorAll('.age-btn').forEach((btn) => {
+    // Age selector (scoped strictly to project age buttons)
+    document.querySelectorAll('.age-btn[data-days]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const days = safeNum(btn.dataset.days, 30);
         if (days === state.olderDays) return;
         state.olderDays = days;
-        document.querySelectorAll('.age-btn').forEach((b) => {
+        document.querySelectorAll('.age-btn[data-days]').forEach((b) => {
           b.classList.toggle('is-active', safeNum(b.dataset.days) === days);
         });
         runScan();
@@ -1741,6 +2393,15 @@
       updateRadarDockStats();
     });
 
+    $('radar-items-list').addEventListener('click', (e) => {
+      const smartBtn = e.target.closest('.js-smart-close-btn');
+      if (!smartBtn || smartBtn.disabled) return;
+      const id = String(smartBtn.dataset.id || '');
+      const items = Array.isArray(state.scanData?.items) ? state.scanData.items : [];
+      const item = items.find((it) => String(it.id) === id);
+      if (item) openSmartCloseModal(item);
+    });
+
     $('btn-execute-clean').addEventListener('click', () => {
       const count = state.selectedItemIds.size;
       const sizeText = $('radar-selected-bytes').textContent;
@@ -1755,7 +2416,95 @@
       );
     });
 
-    // Tab 2: Teleport
+    // Tab 2: Deep Radar
+    document.querySelectorAll('#deep-min-mb-group .deep-min-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const minMb = safeNum(btn.dataset.minMb, 50);
+        if (minMb === state.deepMinMb) return;
+        state.deepMinMb = minMb;
+        document.querySelectorAll('#deep-min-mb-group .deep-min-btn').forEach((b) => {
+          b.classList.toggle('is-active', safeNum(b.dataset.minMb) === minMb);
+        });
+        loadDeepRadar();
+      });
+    });
+
+    $('deep-filter-chips').addEventListener('click', (e) => {
+      const btn = e.target.closest('.filter-chip');
+      if (!btn || !btn.dataset.view) return;
+      state.deepView = btn.dataset.view;
+      document.querySelectorAll('#deep-filter-chips .filter-chip').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.view === state.deepView);
+      });
+      renderDeepRadar();
+    });
+
+    $('btn-select-all-deep').addEventListener('click', () => {
+      const items = Array.isArray(state.deepRadarData?.items) ? state.deepRadarData.items : [];
+      for (const item of items) {
+        if (isDeepMovable(item)) {
+          const rid = getDeepItemId(item);
+          if (rid) state.selectedDeepIds.add(rid);
+        }
+      }
+      renderDeepRadar();
+    });
+
+    $('btn-clear-deep-selection').addEventListener('click', () => {
+      state.selectedDeepIds.clear();
+      renderDeepRadar();
+    });
+
+    $('btn-scan-deepradar').addEventListener('click', () => loadDeepRadar());
+
+    $('deep-radar-list').addEventListener('change', (e) => {
+      const cb = e.target.closest('.js-deep-check');
+      if (!cb) return;
+      const id = String(cb.dataset.id || '');
+      if (cb.checked) state.selectedDeepIds.add(id);
+      else state.selectedDeepIds.delete(id);
+      const card = cb.closest('.item-card');
+      if (card) card.classList.toggle('is-selected', cb.checked);
+      updateDeepDockStats();
+    });
+
+    $('deep-radar-list').addEventListener('click', (e) => {
+      const revealBtn = e.target.closest('.js-radar-reveal-btn');
+      if (!revealBtn) return;
+      const id = String(revealBtn.dataset.id || '');
+      if (id) revealRadarItem(id);
+    });
+
+    $('btn-radar-trash').addEventListener('click', () => {
+      const count = state.selectedDeepIds.size;
+      const sizeText = $('deep-selected-bytes').textContent;
+      requestConfirmIfNeeded(
+        {
+          title: 'Переместить выбранные крупные объекты в Корзину?',
+          warningText: 'Выбранные файлы/папки из Глубокого радара будут перемещены в ~/.Trash.',
+          detailText: `Выбрано объектов: ${count} · Расчётный объём: ${sizeText}.`,
+          confirmLabel: 'УБРАТЬ В КОРЗИНУ',
+        },
+        () => executeRadarAction('trash')
+      );
+    });
+
+    $('btn-radar-teleport').addEventListener('click', () => {
+      const count = state.selectedDeepIds.size;
+      const sizeText = $('deep-selected-bytes').textContent;
+      const shelf = $('radar-shelf-select') ? $('radar-shelf-select').value : '90_Cold_Archive';
+      requestConfirmIfNeeded(
+        {
+          title: `Подтвердить SHA-256 телепорт на полку SSD (${shelf})?`,
+          warningText: `Файлы будут скопированы на /Volumes/secret for mine/${shelf}/Manual_Offload/, проверены по размеру и SHA-256, после чего исходники на NVMe будут удалены.`,
+          detailText: `Выбрано файлов: ${count} · Объём: ${sizeText}.`,
+          confirmLabel: 'ТЕЛЕПОРТ НА ПОЛКУ SSD',
+        },
+        () => executeRadarAction('teleport_ssd')
+      );
+    });
+
+    // Tab 3: Teleport
     $('btn-select-all-media').addEventListener('click', () => {
       const media = Array.isArray(state.scanData?.offload_candidates)
         ? state.scanData.offload_candidates
@@ -1796,7 +2545,7 @@
       );
     });
 
-    // Tab 3: Duplicates
+    // Tab 4: Duplicates
     $('dup-target-group').addEventListener('click', (e) => {
       const btn = e.target.closest('.filter-chip');
       if (!btn || !btn.dataset.target) return;
@@ -1832,7 +2581,101 @@
       );
     });
 
-    // Tab 4: Launch Tools
+    // Tab 5: Trash
+    $('btn-refresh-trash').addEventListener('click', () => loadTrash());
+
+    $('btn-select-trash-7d').addEventListener('click', () => {
+      const items = Array.isArray(state.trashData?.items) ? state.trashData.items : [];
+      for (const item of items) {
+        if (safeNum(item.age_days, 0) >= 7) {
+          const tid = getTrashItemId(item);
+          if (tid) state.selectedTrashIds.add(tid);
+        }
+      }
+      renderTrash();
+    });
+
+    $('btn-clear-trash-selection').addEventListener('click', () => {
+      state.selectedTrashIds.clear();
+      renderTrash();
+    });
+
+    $('trash-items-list').addEventListener('change', (e) => {
+      const cb = e.target.closest('.js-trash-check');
+      if (!cb) return;
+      const id = String(cb.dataset.id || '');
+      if (cb.checked) state.selectedTrashIds.add(id);
+      else state.selectedTrashIds.delete(id);
+      const card = cb.closest('.item-card');
+      if (card) card.classList.toggle('is-selected', cb.checked);
+      updateTrashDockStats();
+    });
+
+    $('btn-purge-trash-30d').addEventListener('click', () => {
+      const sizeText = $('trash-sum-30d').textContent;
+      requestConfirmIfNeeded(
+        {
+          title: 'Навсегда удалить объекты из Корзины старше 30 дней?',
+          warningText: 'ВНИМАНИЕ: удаление из ~/.Trash необратимо! Файлы старше 30 дней будут уничтожены навсегда.',
+          detailText: `Расчётный объём объектов старше 30д: ${sizeText}.`,
+          confirmLabel: 'УДАЛИТЬ >30Д НАВСЕГДА',
+        },
+        () => executeEmptyTrash({ mode: 'older_than', olderDays: 30 })
+      );
+    });
+
+    $('btn-purge-trash-7d').addEventListener('click', () => {
+      const sizeText = $('trash-sum-7d').textContent;
+      requestConfirmIfNeeded(
+        {
+          title: 'Навсегда удалить объекты из Корзины старше 7 дней?',
+          warningText: 'ВНИМАНИЕ: удаление из ~/.Trash необратимо! Файлы старше 7 дней будут уничтожены навсегда.',
+          detailText: `Расчётный объём объектов старше 7д: ${sizeText}.`,
+          confirmLabel: 'УДАЛИТЬ >7Д НАВСЕГДА',
+        },
+        () => executeEmptyTrash({ mode: 'older_than', olderDays: 7 })
+      );
+    });
+
+    $('btn-purge-trash-selected').addEventListener('click', () => {
+      const trashIds = Array.from(state.selectedTrashIds);
+      if (trashIds.length === 0) return;
+      const sizeText = $('trash-selected-bytes').textContent;
+      requestConfirmIfNeeded(
+        {
+          title: 'Навсегда удалить выбранные объекты из Корзины?',
+          warningText: 'ВНИМАНИЕ: безвозвратное удаление из ~/.Trash! Отменить эту операцию будет невозможно.',
+          detailText: `Выбрано объектов: ${trashIds.length} · Объём: ${sizeText}.`,
+          confirmLabel: 'ОЧИСТИТЬ НАВСЕГДА',
+        },
+        () => executeEmptyTrash({ mode: 'selected', trashIds })
+      );
+    });
+
+    $('btn-trash-open-finder').addEventListener('click', () => openTool('finder_trash'));
+
+    $('btn-trash-finder-empty').addEventListener('click', () => {
+      const finderCount = safeNum(
+        state.trashData?.finder_item_count,
+        safeNum(state.trashData?.item_count, 0)
+      );
+      requestConfirmIfNeeded(
+        {
+          alwaysConfirm: true,
+          title: state.dryRun
+            ? 'Предпросмотр очистки Корзины через Finder (DRY-RUN)'
+            : 'Очистить всю Корзину через Finder?',
+          warningText: state.dryRun
+            ? 'Режим DRY-RUN включён: команда Finder НЕ будет выполнена (только предпросмотр).'
+            : 'ВНИМАНИЕ: Finder безвозвратно очистит ВСЮ системную Корзину! Убедитесь, что там нет нужных файлов.',
+          detailText: `Объектов в Корзине по данным Finder: ${finderCount}.`,
+          confirmLabel: state.dryRun ? 'ЗАПУСТИТЬ DRY-RUN' : 'ОЧИСТИТЬ КОРЗИНУ ЧЕРЕЗ FINDER',
+        },
+        () => executeEmptyTrash({ mode: 'finder_empty' })
+      );
+    });
+
+    // Tab 6: Launch Tools
     document.querySelectorAll('.tool-btn[data-tool]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const tool = btn.dataset.tool;
@@ -1894,12 +2737,16 @@
     initOrbitalCanvas();
     syncDryRunUI();
     bindEvents();
+    renderDeepRadar();
     renderDuplicates();
+    renderTrash();
     initSSE();
 
     checkHealth();
     refreshTelemetry();
     runScan();
+    loadDeepRadar({ silent: true });
+    loadTrash({ silent: true });
 
     // Gentle telemetry heartbeat every 15s while visible & idle
     window.setInterval(() => {

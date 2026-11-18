@@ -965,17 +965,17 @@ pre,
 .tab-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
+  gap: 7px;
+  padding: 10px 13px;
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: 10px 10px 0 0;
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   cursor: pointer;
   white-space: nowrap;
   transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
@@ -1097,7 +1097,8 @@ pre,
   box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
 }
 
-.toolbar-right {
+.toolbar-right,
+.toolbar-left-controls {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1146,6 +1147,10 @@ pre,
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.summary-strip--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .summary-stat {
@@ -1219,6 +1224,28 @@ pre,
   background: rgba(255, 255, 255, 0.03);
   border-color: rgba(255, 255, 255, 0.12);
   color: var(--text-secondary);
+}
+
+.btn-cyber--amber {
+  background: rgba(245, 158, 11, 0.11);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #fcd34d;
+}
+.btn-cyber--amber:hover:not(:disabled) {
+  border-color: var(--amber);
+  background: rgba(245, 158, 11, 0.22);
+  color: #ffffff;
+}
+
+.btn-cyber--crimson {
+  background: rgba(255, 51, 102, 0.11);
+  border-color: rgba(255, 51, 102, 0.45);
+  color: #fda4af;
+}
+.btn-cyber--crimson:hover:not(:disabled) {
+  border-color: var(--crimson);
+  background: rgba(255, 51, 102, 0.24);
+  color: #ffffff;
 }
 
 .btn-cyber.is-toggled {
@@ -1340,6 +1367,67 @@ pre,
 .item-card.is-locked {
   border-color: rgba(245, 158, 11, 0.45);
   background: linear-gradient(90deg, rgba(245, 158, 11, 0.09), rgba(11, 18, 34, 0.72) 55%);
+}
+
+.item-card--xray {
+  border-color: rgba(139, 92, 246, 0.44);
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.12), rgba(11, 18, 34, 0.76) 55%);
+}
+
+.item-card-actions {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.xray-icon-slot {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 5px;
+  border: 1px solid rgba(139, 92, 246, 0.58);
+  background: rgba(139, 92, 246, 0.16);
+  color: #c4b5fd;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.xray-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #ede9fe;
+  background: rgba(139, 92, 246, 0.25);
+  border: 1px solid rgba(139, 92, 246, 0.72);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.26);
+}
+
+.xray-note-box {
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(139, 92, 246, 0.12);
+  border-left: 3px solid var(--violet);
+  font-size: 11.5px;
+  color: #ddd6fe;
+}
+
+.deep-note-text {
+  font-size: 11.5px;
+  color: var(--text-secondary);
 }
 
 .item-checkbox {
@@ -1549,6 +1637,87 @@ pre,
   color: #fecdd3;
   background: rgba(255, 51, 102, 0.16);
   border: 1px solid rgba(255, 51, 102, 0.45);
+}
+
+.dock-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shelf-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(6, 11, 22, 0.94);
+  color: var(--text-primary);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+  padding: 7px 28px 7px 11px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--cyan) 50%), linear-gradient(135deg, var(--cyan) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.hud-select:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.25);
+}
+
+/* Tab 5: Trash TCC Fallback Card */
+.tcc-fallback-card {
+  padding: 16px 18px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.13), rgba(11, 18, 34, 0.88) 65%);
+  border: 1px solid rgba(245, 158, 11, 0.48);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.tcc-fallback-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tcc-count-pill {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #fde68a;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.tcc-fallback-copy {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.55;
+}
+
+.tcc-fallback-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 /* Tab 2: Teleport Beam Visualization */
@@ -2198,6 +2367,33 @@ pre,
   color: #fecdd3;
 }
 
+.confirm-notice {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 240, 255, 0.1);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  color: #cffafe;
+}
+
+.confirm-amber-warning {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  color: #fef3c7;
+  font-weight: 600;
+}
+
+.confirm-meta {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 /* Toasts */
 .toast-container {
   position: fixed;
@@ -2295,7 +2491,8 @@ pre,
   .hud-shell {
     padding: 10px 12px 18px;
   }
-  .summary-strip {
+  .summary-strip,
+  .summary-strip--3 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .teleport-beam-card {

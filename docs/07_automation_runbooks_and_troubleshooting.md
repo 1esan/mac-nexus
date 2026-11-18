@@ -2,7 +2,7 @@
 
 # 07 · Регламенты эксплуатации, Runbooks и Устранение сбоев
 
-Этот документ определяет полный операционный цикл поддержки чистоты macOS с помощью **Mac Nexus** и **Стека 1**, пошаговые сценарии диагностики сбоев (Troubleshooting Playbooks), регламент QA-верификации перед изменениями и инженерную дорожную карту развития `v1.1`–`v2.0`.
+Этот документ определяет полный операционный цикл поддержки чистоты macOS с помощью **Mac Nexus v2.0.0** и **Стека 1**, пошаговые сценарии диагностики сбоев (Troubleshooting Playbooks), регламент QA-верификации перед изменениями и инженерную дорожную карту развития `v2.1+`.
 
 ---
 
@@ -68,17 +68,17 @@ sequenceDiagram
 
 **Шаг 1 · Просмотр отчёта в Mac Nexus HUD (15 сек):**
 1. Запустите **Mac Nexus** (двойной клик по `Mac Nexus.app` на Рабочем столе или [`Start_Mac_Nexus.command`](../Start_Mac_Nexus.command)).
-2. Перейдите на вкладку **04 `ПУЛЬТ КОНТУРОВ`** и нажмите **«Открыть Воскресный дайджест»** (выполняет `POST /api/open-tool {"tool": "digest"}` и безопасно рендерит Markdown в Holo-модальном окне).
+2. Перейдите на вкладку **06 `ПУЛЬТ КОНТУРОВ`** и нажмите **«Открыть Воскресный дайджест»** (выполняет `POST /api/open-tool {"tool": "digest"}` и безопасно рендерит Markdown в Holo-модальном окне).
 3. Оцените 7 секций дайджеста: свободное место на NVMe/SSD, примонтированные DMG, план `organize sim`, вес спящих `node_modules`/`.venv` в `~/Projects`, кандидатов `brew cleanup -n`, `hf cache prune --dry-run` и размеры безопасных кэшей GUI.
 
 **Шаг 2 · Выборочная очистка (выберите вариант A через HUD или вариант B через CLI):**
 
 - **Вариант A — через Mac Nexus Cyber-HUD (рекомендуется для наглядного контроля):**
-  1. На вкладке **01 `РАДАР ОЧИСТКИ`** выберите нужный порог возраста проектов (`14д` / `30д` / `60д`), убедитесь, что приложения, чьи кэши нужно почистить, закрыты через `Cmd+Q`, и нажмите **«Скан»** для обновления `LIVE LOCK`.
+  1. На вкладке **01 `РАДАР ОЧИСТКИ`** выберите нужный порог возраста проектов (`14д` / `30д` / `60д`), убедитесь, что приложения, чьи кэши нужно почистить, закрыты через `Cmd+Q`, и нажмите **«Скан»** для обновления `LIVE LOCK`. Для активных кэшей с кнопкой «Smart Close» — не использовать для `Orca` и `VS Code`.
   2. Оставьте верхний переключатель **`DRY-RUN`** во включённом состоянии (`ВКЛ · БЕЗОПАСНО`), нажмите **«Выбрать все доступные»** и затем **«ОЧИСТИТЬ ВЫБРАННОЕ (DRY-RUN)»**.
   3. Проверьте строки `[DRY-RUN]` и `[LOCK-GUARD]` в нижнем **SSE КИБЕР-ТЕРМИНАЛЕ**.
   4. Переведите тумблер **`DRY-RUN`** в положение `ВЫКЛ · БОЕВОЙ РЕЖИМ`, нажмите **«ОЧИСТИТЬ ВЫБРАННОЕ»** и подтвердите операцию в диалоговом Holo-окне.
-  5. При наличии крупных записей экрана (`.mov`, `.mp4`, `.mkv` > 10 MiB) на Рабочем столе или в Загрузках перейдите на вкладку **02 `ТЕЛЕПОРТ НА SSD`**, подключите `/Volumes/secret for mine`, отметьте файлы и запустите **«ТЕЛЕПОРТИРОВАТЬ НА SSD (SHA-256)»** (копирование → проверка размера и SHA-256 → удаление исходника).
+  5. При наличии крупных записей экрана (`.mov`, `.mp4`, `.mkv` > 10 MiB) на Рабочем столе или в Загрузках перейдите на вкладку **03 `ТЕЛЕПОРТ МЕДИА`**, подключите `/Volumes/secret for mine`, отметьте файлы и запустите **«ТЕЛЕПОРТИРОВАТЬ НА SSD (SHA-256)»** (копирование → проверка размера и SHA-256 → удаление исходника). Также откройте вкладку **02 `ГЛУБОКИЙ РАДАР`** для поиска гигантских файлов (hotspot X-Ray).
 
 - **Вариант B — единой CLI-командой (`clean-approve`):**
   1. При необходимости закройте GUI-приложения (`Cmd+Q`) и выполните в терминале:
@@ -100,18 +100,18 @@ sequenceDiagram
    ```
    Скрипт [`clean-gui-caches`](../automation/bin/clean-gui-caches) работает по принципу fail-closed: если хотя бы одно из 9 базовых GUI-приложений продолжает работать (`pgrep -x`), скрипт **немедленно завершится с кодом `1`** и покажет список открытых процессов. Когда все закрыты, он покажет размеры найденных безопасных кэшей (никогда не трогая `User/`, `IndexedDB/` и `*.db*`), запросит `[y/N]` и выведет освобождённые MiB.
 3. **Перезагрузите Mac:** После `clean-gui-caches` выполните штатную перезагрузку macOS — ядро безопасно сбросит `/private/var/folders/*/X/*.code_sign_clone`, временные файлы XPC и файл подкачки (swap).
-4. **Проверьте дубликаты после перезагрузки:** Откройте **Mac Nexus** → вкладка **03 `ДУБЛИКАТЫ`**, поочерёдно просканируйте цели `Downloads`, `Desktop` и `SSD Media` (`POST /api/duplicates`), убедитесь, что самый ранний экземпляр помечен `ОРИГИНАЛ / СОХРАНИТЬ`, и отправьте лишние копии в Корзину (`УБРАТЬ ДУБЛИ В КОРЗИНУ` → `~/.Trash`).
+4. **Проверьте дубликаты после перезагрузки:** Откройте **Mac Nexus** → вкладка **04 `ДУБЛИКАТЫ`**, поочерёдно просканируйте цели `Downloads`, `Desktop`, `SSD Media` и `Documents` (`POST /api/duplicates`), убедитесь, что самый ранний экземпляр помечен `ОРИГИНАЛ / СОХРАНИТЬ`, и отправьте лишние копии в Корзину (`УБРАТЬ ДУБЛИ В КОРЗИНУ` → `~/.Trash`). Также откройте вкладку **05 `КОРЗИНА`** для контроля содержимого `~/.Trash`.
 
 ---
 
 ### 1.5 Quarterly Runbook (`15 мин` — Ревизия программ, DaisyDisk и целостность резервных копий)
 
 1. **Ревизия софта и сирот (`Pearcleaner.app` `5.4.3`):**
-   - Запустите `Pearcleaner.app` из вкладки `ПУЛЬТ КОНТУРОВ`.
+   - Запустите `Pearcleaner.app` из вкладки `06 · ПУЛЬТ КОНТУРОВ`.
    - Убедитесь, что **Sentinel включён**, а **App Lipo строго ВЫКЛЮЧЕН** (Правило 1 из [Книги безопасности](03_cleanup_stack_and_safety_bible.md)).
    - Удалите неиспользуемые тяжёлые приложения и прогоните поиск *Orphaned Files* в `~/Library`.
 2. **Визуальный рентген (`DaisyDisk.app`):**
-   - Запустите `DaisyDisk.app` из вкладки `ПУЛЬТ КОНТУРОВ` в режиме **Scan as Administrator**.
+   - Запустите `DaisyDisk.app` из вкладки `06 · ПУЛЬТ КОНТУРОВ` в режиме **Scan as Administrator**.
    - Проверьте *Hidden Space* на наличие локальных снапшотов Time Machine, оцените фактический размер `OrbStack` (`data.img.raw`) и тяжёлых библиотек в `/opt` или `~/Library/Group Containers`.
 3. **Точечный ремонт ОС (`OnyX` — только при наличии проблем):**
    - Если появились битые ассоциации файлов или сбоит Spotlight, скачайте **строго версию под текущую macOS** (`OnyX v5.0.6` для macOS Tahoe 26) с `titanium-software.fr` и выполните пересборку *Launch Services* / индекса. Не запускайте в `OnyX` массовый сброс системных логов и кэшей без причины.
@@ -306,7 +306,7 @@ sequenceDiagram
 ```zsh
 cd /Users/egorlabutin/Projects/mac-nexus
 
-# 1. Unit & Integration тесты бэкенда (13 тестов в tests/test_mac_nexus.py)
+# 1. Unit & Integration тесты бэкенда (21 тест в tests/test_mac_nexus.py)
 PYTHONPATH=src /opt/anaconda3/bin/python3 -m pytest -v
 
 # 2. Проверка синтаксиса фронтенда (Zero-CDN Vanilla JS)
@@ -342,7 +342,7 @@ curl -s -o /dev/null -w "CSRF_NO_HEADER_HTTP=%{http_code}\n" \
 
 | Проверка | Ожидаемый результат (PASS) | Что блокирует релиз (FAIL) |
 | :--- | :--- | :--- |
-| `pytest -v` ([test_mac_nexus.py](../tests/test_mac_nexus.py)) | `13 passed` (`0` failed, `0` skipped) | Любой провал инвариантов CSRF `403`, `LIVE LOCK` `409`, `SHA-256` или Trash |
+| `pytest -v` ([test_mac_nexus.py](../tests/test_mac_nexus.py)) | `21 passed` (`0` failed, `0` skipped) | Любой провал инвариантов CSRF `403`, `LIVE LOCK` `409`, `SHA-256`, Smart Close или Trash |
 | `node --check` ([app.js](../src/mac_nexus/static/app.js)) | Exit code `0` | Синтаксическая ошибка JS |
 | `zsh -n` на лаунчерах и `automation/bin/*` | Exit code `0` на каждом файле; права `-x` у скриптов | Ошибка кавычек/синтаксиса или отсутствие `chmod +x` |
 | `plutil -lint` | `OK` для `Info.plist` и обоих отрендеренных шаблонов `.plist.tmpl` | Невалидный XML / забытый плейсхолдер |
@@ -351,15 +351,15 @@ curl -s -o /dev/null -w "CSRF_NO_HEADER_HTTP=%{http_code}\n" \
 
 ---
 
-## 4. Инженерная дорожная карта `v1.1` .. `v2.0`
+## 4. Инженерная дорожная карта `v2.0` (DELIVERED) и `v2.1+`
 
-Текущий релиз **`v1.0.0`** полностью закрывает 3-контурную телеметрию, радар очистки, `LIVE LOCK` защиту, SHA-256 телепорт медиа и BLAKE3-поиск дубликатов. Дальнейшее развитие системы разбито на три последовательных инженерных этапа (`NEX-004`–`NEX-006`) с сохранением главного ограничения стека — **Python 3.12+ stdlib only** и нулевых внешних CDN.
+Релиз **`v2.0.0`** (`NEX-004`–`NEX-006` **DELIVERED**) полностью реализует: 3-контурную телеметрию, Радар очистки с 9 категориями (`system_cache`, `app_orphans`, `ai_dev_deep`, `app_cache`, `pkg_cache`, `downloads_inbox`, `dev_projects`, `ghost_dmgs`, `go`/`cargo`), `LIVE LOCK` защиту, Smart Close (с HARD-запретом для `Orca`/`VS Code`), Глубокий Радар (sparse-aware), Корзину (TCC-fallback), 6 вкладок Cyber-HUD, 16 HTTP маршрутов и 21 pytest-тест. Дальнейшее развитие разбито на этапы `v2.1+` при сохранении **Python 3.12+ stdlib only** и нулевых внешних CDN.
 
 | Версия / Тикет | Название и приоритет | Планируемые возможности и затрагиваемые модули | Инженерные инварианты |
 | :--- | :--- | :--- | :--- |
-| **`v1.1` · `NEX-004`** | **AI / Container Telemetry & Session Reports** | • Read-only оценка физического vs sparse размера `OrbStack data.img.raw` (`stat`/`du` без блокировки VM).<br>• Интеграция `hf cache prune --dry-run` и контроля `com.apple.wallpaper/aerials/videos` прямо в `pkg_cache`/`system_bloat` сканер [`scanner.py`](../src/mac_nexus/scanner.py).<br>• Экспорт Markdown-сводки выполненной сессии в `~/.local/state/mac-nexus/sessions/`. | Никаких изменений внутри sparse-файлов без остановки `OrbStack`; сохранение приватности путей в отчётах |
-| **`v1.2` · `NEX-005`** | **LaunchAgents, `tmutil` & Perceptual Media Control** | • Панель статуса `com.egor.env` и `com.egor.mac-hygiene-digest` (`launchctl list`) и проверка `tmutil isexcluded` + `tmutil listlocalsnapshots /` во вкладке `ПУЛЬТ КОНТУРОВ` ([`app.js`](../src/mac_nexus/static/app.js), [`server.py`](../src/mac_nexus/server.py)).<br>• Опциональный перцептивный поиск похожих изображений/видео через `czkawka_cli image` / `video` с явным сохранением защиты `.photoslibrary`. | Только allowlist read-only запросы к `launchctl` и `tmutil`; защита `Photos Library.photoslibrary` в `is_protected_path` |
-| **`v2.0` · `NEX-006`** | **3-2-1 Backup Orchestrator & Snapshot Safety** | • Телеметрия подключённого выделенного диска Time Machine (`tmutil destinationinfo -X`, контроль свежести последнего бэкапа).<br>• Мониторинг зашифрованного off-site бэкапа `restic` (Backblaze B2 / R2 / S3) с `--exclude-xattr`.<br>• Поддержка атомарных read-only APFS-снапшотов (`tmutil localsnapshot` + `mount_apfs -o rdonly`) для консистентного бэкапа живых SQLite WAL баз (`Orca`, `Codex`, `Hermes`) и SHA-256 верификация манифестов `90_Cold_Archive/`. | Никаких токенов/ключей S3/restic внутри репозитория и HTTP API; только статус и безопасные триггеры через `ScanSnapshot` |
+| **`v2.0.0` · `NEX-004–006`** | **✅ DELIVERED — AI Telemetry, Deep Radar, Smart Close, Trash UI** | • 9 категорий Radar (`system_cache`, `app_orphans`, `ai_dev_deep`, `app_cache`, `pkg_cache`, `go`, `cargo`, ...). <br>• Вкладка Глубокий Радар: sparse-aware `_physical_file_size`, `scan_deep_radar`, Radar Action (Trash / SSD), Finder Reveal.<br>• Вкладка Корзина: `scan_trash`, TCC-fallback, `purge_trash_items` (selected / older_than / finder_empty).<br>• Smart Close: `start_smart_close_clean_job` (10s poll, HARD-FORBIDDEN для Orca/VS Code).<br>• 6 вкладок HUD; 21 pytest-тест; 16 HTTP маршрутов. | Все ограничения stdlib-only сохранены; никаких рисков для Orca worktrees |
+| **`v2.1` · `NEX-007`** | **LaunchAgents, `tmutil` & Perceptual Media Control** | • Панель статуса `com.egor.env` и `com.egor.mac-hygiene-digest` (`launchctl list`) и проверка `tmutil isexcluded` + `tmutil listlocalsnapshots /` во вкладке `06 · ПУЛЬТ КОНТУРОВ` ([`app.js`](../src/mac_nexus/static/app.js), [`server.py`](../src/mac_nexus/server.py)).<br>• Опциональный перцептивный поиск похожих изображений/видео через `czkawka_cli image` / `video` с явным сохранением защиты `.photoslibrary`. | Только allowlist read-only запросы к `launchctl` и `tmutil`; защита `Photos Library.photoslibrary` в `is_protected_path` |
+| **`v2.2` · `NEX-008`** | **3-2-1 Backup Orchestrator & Snapshot Safety** | • Телеметрия подключённого выделенного диска Time Machine (`tmutil destinationinfo -X`, контроль свежести последнего бэкапа).<br>• Мониторинг зашифрованного off-site бэкапа `restic` (Backblaze B2 / R2 / S3) с `--exclude-xattr`.<br>• Поддержка атомарных read-only APFS-снапшотов (`tmutil localsnapshot` + `mount_apfs -o rdonly`) для консистентного бэкапа живых SQLite WAL баз (`Orca`, `Codex`, `Hermes`) и SHA-256 верификация манифестов `90_Cold_Archive/`. | Никаких токенов/ключей S3/restic внутри репозитория и HTTP API; только статус и безопасные триггеры через `ScanSnapshot` |
 
 ---
 

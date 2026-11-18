@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import subprocess
 import threading
 import time
@@ -38,8 +39,25 @@ def isolated_env(tmp_path: Path):
     trash = home / ".Trash"
     state_dir = home / ".local/state/mac-nexus"
     digest_path = home / ".local/state/mac-hygiene/digest_latest.md"
+    apps_dir = tmp_path / "Applications"
+    var_temp = tmp_path / "var_temp"
+    users_dir = tmp_path / "Users"
 
-    for d in (home, nvme, ssd, secondbrain, projects, downloads, desktop, trash, state_dir, digest_path.parent):
+    for d in (
+        home,
+        nvme,
+        ssd,
+        secondbrain,
+        projects,
+        downloads,
+        desktop,
+        trash,
+        state_dir,
+        digest_path.parent,
+        apps_dir,
+        var_temp,
+        users_dir,
+    ):
         d.mkdir(parents=True, exist_ok=True)
     for shelf in scanner.SSD_SHELVES:
         (ssd / shelf).mkdir(parents=True, exist_ok=True)
@@ -47,6 +65,8 @@ def isolated_env(tmp_path: Path):
 
     state: dict[str, Any] = {
         "running_pgrep": set(),
+        "running_pgrep_fi": set(),
+        "ps_comms": "",
         "rider": False,
         "orca_json": {"result": {"worktrees": []}},
         "orca_text": "",
@@ -56,6 +76,10 @@ def isolated_env(tmp_path: Path):
         "hdiutil_images": [],
         "ssd_mounted": True,
         "czkawka_payload": {},
+        "docker_df_stdout": "",
+        "docker_df_rc": 0,
+        "finder_trash_count": 0,
+        "smart_close_quits": True,
         "commands_called": [],
         "now": 1_800_000_000.0,
     }
@@ -68,9 +92,36 @@ def isolated_env(tmp_path: Path):
 
         if cmd0 == "pgrep":
             target_proc = args[-1]
-            if "-fi" in args and target_proc == "rider":
-                return _cp(args, 0 if state["rider"] else 1, "999\n" if state["rider"] else "")
+            if "-fi" in args:
+                if target_proc == "rider":
+                    return _cp(args, 0 if state["rider"] else 1, "999\n" if state["rider"] else "")
+                fi_set = {x.lower() for x in state.get("running_pgrep_fi", set())}
+                matched = target_proc.lower() in fi_set
+                return _cp(args, 0 if matched else 1, "998\n" if matched else "")
             return _cp(args, 0 if target_proc in state["running_pgrep"] else 1, "12345\n" if target_proc in state["running_pgrep"] else "")
+
+        if cmd0 == "ps":
+            return _cp(args, 0, state.get("ps_comms", ""))
+
+        if cmd0 == "docker":
+            if len(args) >= 3 and args[1] == "system" and args[2] == "df":
+                out = state.get("docker_df_stdout", "")
+                rc = int(state.get("docker_df_rc", 0)) if out else 1
+                return _cp(args, rc, out)
+            return _cp(args, 0, "")
+
+        if cmd0 == "go":
+            if len(args) >= 3 and args[1] == "clean" and args[2] == "-modcache":
+                modcache = home / "go/pkg/mod/cache/download"
+                if modcache.exists():
+                    for child in list(modcache.iterdir()):
+                        if child.is_dir():
+                            import shutil as _shutil
+
+                            _shutil.rmtree(child, ignore_errors=True)
+                        else:
+                            child.unlink(missing_ok=True)
+            return _cp(args, 0, "")
 
         if cmd0 == "orca":
             if "--json" in args:
@@ -118,6 +169,16 @@ def isolated_env(tmp_path: Path):
             return _cp(args, 0, raw)
 
         if cmd0 == "osascript":
+            script = args[-1] if args else ""
+            if "count of items of trash" in script:
+                return _cp(args, 0, f"{state.get('finder_trash_count', 0)}\n")
+            if "to empty trash" in script:
+                return _cp(args, 0, "")
+            if "to quit" in script:
+                m_app = re.search(r'tell application "([^"]+)" to quit', script)
+                if m_app and state.get("smart_close_quits", True):
+                    state["running_pgrep"].discard(m_app.group(1))
+                return _cp(args, 0, "")
             return _cp(
                 args,
                 0,
@@ -168,6 +229,9 @@ def isolated_env(tmp_path: Path):
         trash_dir=trash,
         state_dir=state_dir,
         digest_path=digest_path,
+        applications_dirs=(apps_dir,),
+        temp_dir=var_temp,
+        users_dir=users_dir,
         orca_bin=tmp_path / "bin/orca",
         czkawka_bin=tmp_path / "bin/czkawka_cli",
         organize_bin=tmp_path / "bin/organize",
@@ -176,6 +240,8 @@ def isolated_env(tmp_path: Path):
         anaconda_python=tmp_path / "bin/python3",
         uv_bin=tmp_path / "bin/uv",
         npm_bin=tmp_path / "bin/npm",
+        docker_bin=tmp_path / "bin/docker",
+        go_bin=tmp_path / "bin/go",
         ssd_mount_checker=lambda _p: bool(state["ssd_mounted"]),
         cmd_runner=fake_cmd,
         now_fn=lambda: float(state["now"]),
@@ -774,7 +840,7 @@ def test_telemetry_and_open_tool_allowlist(live_server):
     assert s_h == 200
     assert health["ok"] is True
     assert health["app"] == "Mac Nexus"
-    assert health["version"] == "1.0.0"
+    assert health["version"] == "2.0.0"
     assert isinstance(health["pid"], int)
 
     (env.secondbrain_dir / "note1.md").write_text("# Note 1", encoding="utf-8")
@@ -866,3 +932,624 @@ def test_sse_events_endpoint_streams_json(live_server):
     conn.close()
     assert any(e.get("type") == "done" and e.get("job_id") == job_id for e in events)
     assert stale_dmg.exists()
+
+
+def test_v2_csrf_and_origin_enforcement_new_routes(live_server):
+    base_url, port, *_ = live_server
+    new_routes = [
+        ("/api/smart-close-clean", {"item_id": "x", "reopen": True, "dry_run": True}),
+        ("/api/radar-action", {"radar_ids": ["r"], "action": "trash", "dry_run": True}),
+        ("/api/radar-reveal", {"radar_id": "r"}),
+        ("/api/empty-trash", {"mode": "older_than", "older_days": 30, "dry_run": True}),
+    ]
+    for route, payload in new_routes:
+        status, data = _http_json(base_url, "POST", route, payload, headers={})
+        assert status == 403
+        assert data["ok"] is False
+
+        for bad_origin in ("https://evil.example", "http://127.0.0.1.evil.com:8790", "http://0.0.0.0:8790"):
+            s_orig, d_orig = _http_json(
+                base_url,
+                "POST",
+                route,
+                payload,
+                headers={"X-Mac-Nexus-Client": "1", "Origin": bad_origin},
+            )
+            assert s_orig == 403
+            assert d_orig["ok"] is False
+
+    # Valid Origin + CSRF header reaches type/target validation (400 instead of 403)
+    s_ok, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/empty-trash",
+        {"mode": "bad_mode", "dry_run": True},
+        headers={"X-Mac-Nexus-Client": "1", "Origin": f"http://127.0.0.1:{port}"},
+    )
+    assert s_ok == 400
+
+
+def test_v2_pkg_cache_go_and_cargo(live_server):
+    base_url, _, env, state, _ = live_server
+    go_cache = env.home / "go/pkg/mod/cache/download/github.com/pkg"
+    go_cache.mkdir(parents=True, exist_ok=True)
+    (go_cache / "v1.0.0.zip").write_bytes(b"G" * (11 * 1024 * 1024))
+
+    cargo_cache = env.home / ".cargo/registry/cache/index.crates.io-1"
+    cargo_cache.mkdir(parents=True, exist_ok=True)
+    crate_blob = cargo_cache / "serde-1.0.crate"
+    crate_blob.write_bytes(b"C" * (11 * 1024 * 1024))
+
+    status, scan = _http_json(base_url, "GET", "/api/scan?older_days=30")
+    assert status == 200
+    pkg_items = {it["title"]: it for it in scan["items"] if it["category"] == "pkg_cache"}
+    go_item = next(v for k, v in pkg_items.items() if k.startswith("Go "))
+    cargo_item = next(v for k, v in pkg_items.items() if k.startswith("Cargo "))
+
+    # 1. Cargo executes _clear_cache_dir_contents cleanly
+    s_cargo, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/execute",
+        {"item_ids": [cargo_item["id"]], "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_cargo == 200
+    deadline = time.time() + 3.0
+    while time.time() < deadline and crate_blob.exists():
+        time.sleep(0.05)
+    assert not crate_blob.exists()
+    assert (env.home / ".cargo/registry/cache").exists()
+
+    # 2. Go invokes `go clean -modcache` when go_bin exists
+    env.go_bin.parent.mkdir(parents=True, exist_ok=True)
+    env.go_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    s_go, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/execute",
+        {"item_ids": [go_item["id"]], "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_go == 200
+    deadline = time.time() + 3.0
+    while time.time() < deadline and not any(
+        len(c) >= 3 and Path(c[0]).name == "go" and c[1:3] == ["clean", "-modcache"]
+        for c in state["commands_called"]
+    ):
+        time.sleep(0.05)
+    assert any(
+        len(c) >= 3 and Path(c[0]).name == "go" and c[1:3] == ["clean", "-modcache"]
+        for c in state["commands_called"]
+    )
+
+
+def test_v2_system_cache_and_app_orphans(live_server):
+    base_url, _, env, state, _ = live_server
+    old_ts = state["now"] - 25 * 86400
+    fresh_ts = state["now"] - 1 * 86400
+
+    # System cache: third-party cache >= 15 MiB, Apple CloudKit excluded, stale temp >3d >=10 MiB, fresh pytest excluded
+    tp_cache = env.home / "Library/Caches/ThirdPartyTool/blobs"
+    tp_cache.mkdir(parents=True, exist_ok=True)
+    tp_blob = tp_cache / "data.bin"
+    tp_blob.write_bytes(b"T" * (16 * 1024 * 1024))
+
+    apple_ck = env.home / "Library/Caches/CloudKit"
+    apple_ck.mkdir(parents=True, exist_ok=True)
+    (apple_ck / "sync.db").write_bytes(b"A" * (16 * 1024 * 1024))
+
+    stale_tmp = env.temp_dir / "stale-build-tmp"
+    stale_tmp.mkdir(parents=True, exist_ok=True)
+    stale_tmp_file = stale_tmp / "dump.bin"
+    stale_tmp_file.write_bytes(b"S" * (11 * 1024 * 1024))
+    os.utime(stale_tmp_file, (old_ts, old_ts))
+    os.utime(stale_tmp, (old_ts, old_ts))
+
+    fresh_pytest = env.temp_dir / "pytest-of-egor"
+    fresh_pytest.mkdir(parents=True, exist_ok=True)
+    (fresh_pytest / "tmp.bin").write_bytes(b"P" * (11 * 1024 * 1024))
+    os.utime(fresh_pytest, (fresh_ts, fresh_ts))
+
+    # App orphans: installed bundle ID preserved; uninstalled >14d >=20 MiB flagged & trashed
+    app_plist = env.applications_dirs[0] / "InstalledTool.app/Contents/Info.plist"
+    app_plist.parent.mkdir(parents=True, exist_ok=True)
+    with app_plist.open("wb") as fh:
+        plistlib.dump({"CFBundleIdentifier": "com.example.installedtool", "CFBundleName": "InstalledTool"}, fh)
+
+    kept_sup = env.home / "Library/Application Support/com.example.installedtool"
+    kept_sup.mkdir(parents=True, exist_ok=True)
+    (kept_sup / "assets.dat").write_bytes(b"K" * (21 * 1024 * 1024))
+    os.utime(kept_sup, (old_ts, old_ts))
+
+    apple_sup = env.home / "Library/Application Support/com.apple.ProtectedAgent"
+    apple_sup.mkdir(parents=True, exist_ok=True)
+    (apple_sup / "state.dat").write_bytes(b"M" * (21 * 1024 * 1024))
+    os.utime(apple_sup, (old_ts, old_ts))
+
+    orphan_sup = env.home / "Library/Application Support/com.ghost.RemovedWidget"
+    orphan_sup.mkdir(parents=True, exist_ok=True)
+    (orphan_sup / "cache.dat").write_bytes(b"O" * (21 * 1024 * 1024))
+    os.utime(orphan_sup, (old_ts, old_ts))
+
+    status, scan = _http_json(base_url, "GET", "/api/scan?older_days=30")
+    assert status == 200
+
+    sys_items = [it for it in scan["items"] if it["category"] == "system_cache"]
+    sys_path_list = [it["path"] for it in sys_items]
+    assert str(env.home / "Library/Caches/ThirdPartyTool") in sys_path_list
+    assert str(stale_tmp) in sys_path_list
+    assert str(apple_ck) not in sys_path_list
+    assert str(fresh_pytest) not in sys_path_list
+
+    orphan_items = [it for it in scan["items"] if it["category"] == "app_orphans"]
+    orphan_paths = " | ".join(it["path"] for it in orphan_items)
+    assert "com.ghost.RemovedWidget" in orphan_paths
+    assert "com.example.installedtool" not in orphan_paths
+    assert "com.apple.ProtectedAgent" not in orphan_paths
+
+    # Execute cleanup on ThirdPartyTool + orphan
+    tp_item = next(it for it in sys_items if "ThirdPartyTool" in it["path"])
+    orphan_item = next(it for it in orphan_items if "com.ghost.RemovedWidget" in it["path"])
+
+    s_exec, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/execute",
+        {"item_ids": [tp_item["id"], orphan_item["id"]], "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_exec == 200
+    deadline = time.time() + 3.0
+    while time.time() < deadline and (tp_blob.exists() or orphan_sup.exists()):
+        time.sleep(0.05)
+    assert not tp_blob.exists()
+    assert not orphan_sup.exists()
+    assert (env.trash_dir / "com.ghost.RemovedWidget").exists()
+    assert kept_sup.exists()
+
+
+def test_v2_ai_dev_deep_codex_hermes_and_docker(live_server):
+    base_url, _, env, state, _ = live_server
+    old_2d = state["now"] - 2 * 86400
+    old_10d = state["now"] - 10 * 86400
+
+    # Codex runtimes: keep codex-primary-runtime, clean codex-runtime-install-*
+    runtimes_dir = env.home / ".cache/codex-runtimes"
+    primary_rt = runtimes_dir / "codex-primary-runtime"
+    stale_rt = runtimes_dir / "codex-runtime-install-xyz"
+    for d in (primary_rt, stale_rt):
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "node").write_bytes(b"R" * (2 * 1024 * 1024))
+        os.utime(d, (old_2d, old_2d))
+
+    # Hermes worktrees: live Orca worktree locked/excluded vs stale >7d trashable
+    hermes_wts = env.home / ".hermes/hermes-agent/.worktrees"
+    live_wt = hermes_wts / "wt-live"
+    stale_wt = hermes_wts / "wt-stale"
+    for d, ts in ((live_wt, old_10d), (stale_wt, old_10d)):
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "data.bin").write_bytes(b"W" * (2 * 1024 * 1024))
+        os.utime(d, (ts, ts))
+
+    state["orca_json"] = {
+        "result": {
+            "worktrees": [
+                {
+                    "repo": "hermes-agent",
+                    "path": str(live_wt),
+                    "liveTerminalCount": 1,
+                    "hasAttachedPty": True,
+                    "status": "working",
+                    "agents": [{"id": "h1"}],
+                }
+            ]
+        }
+    }
+
+    # Docker reclaimable mock
+    state["docker_df_stdout"] = (
+        '{"Type":"Images","TotalCount":"2","Active":"0","Size":"2.5GB","Reclaimable":"2.0GB (80%)"}\n'
+        '{"Type":"Build Cache","TotalCount":"10","Active":"0","Size":"500MB","Reclaimable":"500MB"}\n'
+    )
+
+    status, scan = _http_json(base_url, "GET", "/api/scan?older_days=30")
+    assert status == 200
+    ai_items = [it for it in scan["items"] if it["category"] == "ai_dev_deep"]
+    ai_paths = " | ".join(it["path"] for it in ai_items)
+    assert "codex-runtime-install-xyz" in ai_paths
+    assert "codex-primary-runtime" not in ai_paths
+    assert "wt-stale" in ai_paths
+    assert not any("wt-live" in it["path"] and not it["locked"] for it in ai_items)
+
+    codex_item = next(it for it in ai_items if "codex-runtime-install-xyz" in it["path"])
+    wt_item = next(it for it in ai_items if "wt-stale" in it["path"])
+    docker_item = next(it for it in ai_items if it["action_kind"] == "docker_prune")
+    assert docker_item["size_bytes"] > 0
+
+    s_exec, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/execute",
+        {"item_ids": [codex_item["id"], wt_item["id"], docker_item["id"]], "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_exec == 200
+    deadline = time.time() + 3.0
+    while time.time() < deadline and (stale_rt.exists() or stale_wt.exists()):
+        time.sleep(0.05)
+    assert not stale_rt.exists()
+    assert primary_rt.exists()
+    assert not stale_wt.exists()
+    assert (env.trash_dir / "wt-stale").exists()
+    assert live_wt.exists()
+    assert any(c[-3:] == ["image", "prune", "-f"] for c in state["commands_called"])
+    assert any(c[-3:] == ["builder", "prune", "-f"] for c in state["commands_called"])
+
+    # Direct executor guard: forged rm_artifact targeting codex-primary-runtime MUST NOT delete it
+    forged = scanner.ScanTarget(
+        item_id="forged_codex",
+        category="ai_dev_deep",
+        title="Forged primary",
+        action_kind="rm_artifact",
+        paths=[primary_rt],
+        estimated_bytes=1024,
+    )
+    reclaimed = executor._execute_single_target(forged, False, env, executor.EventBroker(), "job_forged")
+    assert reclaimed == 0
+    assert primary_rt.exists()
+
+
+def test_v2_smart_close_clean_guards_and_execution(live_server, monkeypatch):
+    base_url, _, env, state, _ = live_server
+    state["running_pgrep"] = {"Orca", "Code", "Telegram", "Google Chrome"}
+
+    # Seed Orca, VS Code, Telegram, and Chrome caches + protected DBs
+    orca_cache = env.home / "Library/Application Support/orca/Cache"
+    orca_cache.mkdir(parents=True, exist_ok=True)
+    (orca_cache / "blob.bin").write_bytes(b"O" * 8192)
+
+    vscode_cache = env.home / "Library/Application Support/Code/Cache"
+    vscode_cache.mkdir(parents=True, exist_ok=True)
+    (vscode_cache / "blob.bin").write_bytes(b"V" * 8192)
+
+    tg_tmp = env.home / "Library/Containers/ru.keepcoder.Telegram/Data/tmp"
+    tg_db = env.home / "Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/account-1/db.sqlite"
+    tg_tmp.mkdir(parents=True, exist_ok=True)
+    tg_db.parent.mkdir(parents=True, exist_ok=True)
+    (tg_tmp / "media.tmp").write_bytes(b"T" * 16384)
+    tg_db.write_bytes(b"keep-telegram-db")
+
+    chrome_cache = env.home / "Library/Caches/Google/Chrome/Default/Cache"
+    chrome_cache.mkdir(parents=True, exist_ok=True)
+    (chrome_cache / "c.bin").write_bytes(b"C" * 8192)
+
+    _, scan = _http_json(base_url, "GET", "/api/scan?older_days=30")
+    app_items = {it["title"]: it for it in scan["items"] if it["category"] == "app_cache"}
+
+    orca_item = next(v for k, v in app_items.items() if "Orca" in k)
+    vscode_item = next(v for k, v in app_items.items() if "VS Code" in k)
+    tg_item = next(v for k, v in app_items.items() if "Telegram" in k)
+    chrome_item = next(v for k, v in app_items.items() if "Chrome" in k)
+
+    assert orca_item["quittable"] is False
+    assert vscode_item["quittable"] is False
+    assert tg_item["quittable"] is True
+    assert tg_item["browser_warning"] is False
+    assert chrome_item["quittable"] is True
+    assert chrome_item["browser_warning"] is True
+
+    # 1. Orca and VS Code MUST return 409 LIVE LOCK
+    for forbidden in (orca_item, vscode_item):
+        s_409, err_409 = _http_json(
+            base_url,
+            "POST",
+            "/api/smart-close-clean",
+            {"item_id": forbidden["id"], "reopen": True, "dry_run": False},
+            headers={"X-Mac-Nexus-Client": "1"},
+        )
+        assert s_409 == 409
+        assert "LIVE LOCK" in err_409["error"]
+
+    # 2. Dry-run on Telegram does NOT quit or clear cache
+    s_dry, dry_res = _http_json(
+        base_url,
+        "POST",
+        "/api/smart-close-clean",
+        {"item_id": tg_item["id"], "reopen": True, "dry_run": True},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_dry == 200
+    assert dry_res["job_id"].startswith("smart_")
+    time.sleep(0.15)
+    assert "Telegram" in state["running_pgrep"]
+    assert (tg_tmp / "media.tmp").exists()
+
+    # 3. Timeout guard: if app doesn't exit, cache MUST NOT be touched
+    state["smart_close_quits"] = False
+    monkeypatch.setattr(executor, "_SMART_CLOSE_TIMEOUT_SEC", 0.12)
+    monkeypatch.setattr(executor, "_SMART_CLOSE_POLL_SEC", 0.03)
+    s_to, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/smart-close-clean",
+        {"item_id": tg_item["id"], "reopen": True, "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_to == 200
+    time.sleep(0.25)
+    assert (tg_tmp / "media.tmp").exists()
+    assert "Telegram" in state["running_pgrep"]
+
+    # 4. Live Smart Close quits Telegram, clears tmp, keeps SQLite DB, and reopens Telegram
+    state["smart_close_quits"] = True
+    monkeypatch.setattr(executor, "_SMART_CLOSE_TIMEOUT_SEC", 10.0)
+    s_live, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/smart-close-clean",
+        {"item_id": tg_item["id"], "reopen": True, "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_live == 200
+    deadline = time.time() + 3.0
+    while time.time() < deadline and (tg_tmp / "media.tmp").exists():
+        time.sleep(0.05)
+    assert not (tg_tmp / "media.tmp").exists()
+    assert tg_db.exists()
+    assert any(c == ["open", "-a", "Telegram"] for c in state["commands_called"])
+    assert scanner.load_history(env)["total_reclaimed_bytes"] >= 16384
+
+
+def test_v2_deep_radar_sparse_hotspot_teleport_and_reveal(live_server):
+    base_url, _, env, state, _ = live_server
+
+    # Movable installer (>= 50 MiB) + sparse OrbStack hotspot (~55 MiB physical, 200 MiB logical)
+    big_iso = env.downloads_dir / "UbuntuServer.iso"
+    iso_payload = b"I" * (52 * 1024 * 1024)
+    big_iso.write_bytes(iso_payload)
+    expected_sha = hashlib.sha256(iso_payload).hexdigest()
+
+    big_archive = env.home / "Documents/archive_bundle.tar.gz"
+    big_archive.parent.mkdir(parents=True, exist_ok=True)
+    big_archive.write_bytes(b"Z" * (51 * 1024 * 1024))
+
+    orb_img = env.home / "Library/Group Containers/HUAQ24HBR6.dev.orbstack/data/data.img.raw"
+    orb_img.parent.mkdir(parents=True, exist_ok=True)
+    with orb_img.open("wb") as fh:
+        fh.write(b"B" * (55 * 1024 * 1024))
+        fh.truncate(200 * 1024 * 1024)
+
+    status, radar = _http_json(base_url, "GET", "/api/deep-radar?min_mb=50")
+    assert status == 200
+    assert radar["ok"] is True
+    assert radar["summary"]["count"] >= 3
+
+    iso_item = next(it for it in radar["items"] if it["title"] == "UbuntuServer.iso")
+    arch_item = next(it for it in radar["items"] if it["title"] == "archive_bundle.tar.gz")
+    orb_item = next(it for it in radar["items"] if "OrbStack" in it["title"])
+
+    assert iso_item["kind"] == "file"
+    assert iso_item["default_shelf"] == "03_Software_and_Installers"
+    assert iso_item["can_teleport"] is True
+    assert iso_item["can_trash"] is True
+
+    assert orb_item["kind"] == "hotspot"
+    assert orb_item["can_trash"] is False
+    assert orb_item["can_teleport"] is False
+    assert orb_item["logical_bytes"] == 200 * 1024 * 1024
+    assert orb_item["size_bytes"] < orb_item["logical_bytes"]
+
+    # 1. Reject deleting or teleporting a hotspot with 409
+    s_hs, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/radar-action",
+        {"radar_ids": [orb_item["id"]], "action": "trash", "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_hs == 409
+
+    # 2. Reveal in Finder calls open -R
+    s_rev, rev_res = _http_json(
+        base_url,
+        "POST",
+        "/api/radar-reveal",
+        {"radar_id": iso_item["id"]},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_rev == 200
+    assert rev_res["ok"] is True
+    assert ["open", "-R", str(big_iso)] in state["commands_called"]
+
+    # 3. Teleport installer to custom shelf 03_Software_and_Installers (and verify unmounted SSD guard)
+    state["ssd_mounted"] = False
+    s_unm, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/radar-action",
+        {
+            "radar_ids": [iso_item["id"]],
+            "action": "teleport_ssd",
+            "shelf": "03_Software_and_Installers",
+            "dry_run": False,
+        },
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_unm == 409
+    assert big_iso.exists()
+    state["ssd_mounted"] = True
+
+    s_tp, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/radar-action",
+        {
+            "radar_ids": [iso_item["id"]],
+            "action": "teleport_ssd",
+            "shelf": "03_Software_and_Installers",
+            "dry_run": False,
+        },
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_tp == 200
+    deadline = time.time() + 5.0
+    while time.time() < deadline and big_iso.exists():
+        time.sleep(0.05)
+    assert not big_iso.exists()
+    offloaded = list((env.ssd_mount / "03_Software_and_Installers/Manual_Offload").rglob("UbuntuServer.iso"))
+    assert len(offloaded) == 1
+    assert hashlib.sha256(offloaded[0].read_bytes()).hexdigest() == expected_sha
+
+    # 4. Trash move via Deep Radar
+    s_tr, _ = _http_json(
+        base_url,
+        "POST",
+        "/api/radar-action",
+        {"radar_ids": [arch_item["id"]], "action": "trash", "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_tr == 200
+    deadline = time.time() + 3.0
+    while time.time() < deadline and big_archive.exists():
+        time.sleep(0.05)
+    assert not big_archive.exists()
+    assert (env.trash_dir / "archive_bundle.tar.gz").exists()
+
+
+def test_v2_trash_scan_purge_and_tcc_fallback(live_server, monkeypatch):
+    base_url, _, env, state, _ = live_server
+    old_45d = state["now"] - 45 * 86400
+    fresh_2d = state["now"] - 2 * 86400
+
+    old_file = env.trash_dir / "stale_dump.bin"
+    old_file.write_bytes(b"O" * 8192)
+    os.utime(old_file, (old_45d, old_45d))
+
+    fresh_dir = env.trash_dir / "recent_folder"
+    fresh_dir.mkdir(parents=True, exist_ok=True)
+    (fresh_dir / "note.txt").write_bytes(b"N" * 4096)
+    os.utime(fresh_dir / "note.txt", (fresh_2d, fresh_2d))
+    os.utime(fresh_dir, (fresh_2d, fresh_2d))
+
+    # Telemetry includes trash summary
+    s_tel, tel = _http_json(base_url, "GET", "/api/telemetry")
+    assert s_tel == 200
+    assert tel["trash"]["tcc_restricted"] is False
+    assert tel["trash"]["item_count"] == 2
+
+    # GET /api/trash lists both items
+    s_tr, tr = _http_json(base_url, "GET", "/api/trash")
+    assert s_tr == 200
+    assert tr["tcc_restricted"] is False
+    assert tr["item_count"] == 2
+    assert tr["older_30d_bytes"] == 8192
+
+    # Dry-run older_than=30 preserves both
+    s_dry, dry_res = _http_json(
+        base_url,
+        "POST",
+        "/api/empty-trash",
+        {"mode": "older_than", "older_days": 30, "dry_run": True},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_dry == 200
+    assert dry_res["dry_run"] is True
+    assert dry_res["purged_count"] == 1
+    assert old_file.exists() and fresh_dir.exists()
+
+    # Live older_than=30 deletes ONLY old_file
+    s_live, live_res = _http_json(
+        base_url,
+        "POST",
+        "/api/empty-trash",
+        {"mode": "older_than", "older_days": 30, "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_live == 200
+    assert live_res["purged_count"] == 1
+    assert live_res["reclaimed_bytes"] == 8192
+    assert not old_file.exists()
+    assert fresh_dir.exists()
+
+    # Selected purge deletes remaining fresh_dir
+    fresh_item = next(it for it in tr["items"] if it["name"] == "recent_folder")
+    s_sel, sel_res = _http_json(
+        base_url,
+        "POST",
+        "/api/empty-trash",
+        {"mode": "selected", "trash_ids": [fresh_item["id"]], "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_sel == 200
+    assert sel_res["purged_count"] == 1
+    assert not fresh_dir.exists()
+
+    # TCC PermissionError fallback -> tcc_restricted=True + Finder item count + finder_empty + open-tool finder_trash
+    state["finder_trash_count"] = 5
+    orig_scandir = os.scandir
+
+    def fake_scandir(path="."):
+        if Path(path) == env.trash_dir:
+            raise PermissionError("Operation not permitted")
+        return orig_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+    s_tcc, tr_tcc = _http_json(base_url, "GET", "/api/trash")
+    assert s_tcc == 200
+    assert tr_tcc["tcc_restricted"] is True
+    assert tr_tcc["item_count"] == 5
+
+    s_ft, ft_res = _http_json(
+        base_url,
+        "POST",
+        "/api/open-tool",
+        {"tool": "finder_trash"},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_ft == 200
+    assert ft_res["ok"] is True
+    assert ["open", str(env.trash_dir)] in state["commands_called"]
+
+    s_fe, fe_res = _http_json(
+        base_url,
+        "POST",
+        "/api/empty-trash",
+        {"mode": "finder_empty", "dry_run": False},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_fe == 200
+    assert fe_res["purged_count"] == -1
+    assert any(c[-1] == 'tell application "Finder" to empty trash' for c in state["commands_called"])
+
+
+def test_v2_duplicates_documents_target(live_server):
+    base_url, _, env, state, _ = live_server
+    docs_dir = env.home / "Documents"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    d1 = docs_dir / "spec.pdf"
+    d2 = docs_dir / "copy/spec.pdf"
+    d2.parent.mkdir(parents=True, exist_ok=True)
+    sz = 2 * 1024 * 1024
+    d1.write_bytes(b"D" * sz)
+    d2.write_bytes(b"D" * sz)
+
+    state["czkawka_payload"] = {
+        str(sz): [
+            [
+                {"path": str(d1), "modified_date": 1_790_000_100, "size": sz, "hash": "doc1"},
+                {"path": str(d2), "modified_date": 1_790_000_200, "size": sz, "hash": "doc1"},
+            ]
+        ]
+    }
+    s_dup, dup_res = _http_json(
+        base_url,
+        "POST",
+        "/api/duplicates",
+        {"target": "documents"},
+        headers={"X-Mac-Nexus-Client": "1"},
+    )
+    assert s_dup == 200
+    assert dup_res["ok"] is True
+    assert len(dup_res["groups"]) == 1
+    assert dup_res["total_wasted_bytes"] == sz

@@ -1,0 +1,21 @@
+{
+  "id": "mac-nexus",
+  "title": "Mac Nexus",
+  "status": "active",
+  "version_or_stage": "v2.0.0 Deep Smart Cleaner (:8790)",
+  "stack": [
+    "Python 3.12 stdlib",
+    "SSE",
+    "HTML5/Canvas/SVG",
+    "Vanilla JS"
+  ],
+  "entry_docs": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    "README.md",
+    "docs/00_master_index_and_system_map.md"
+  ],
+  "test_cmd": "PYTHONPATH=src /opt/anaconda3/bin/python3 -m pytest -v",
+  "vault_hub": "02_пространство/Работа/Mac_Nexus/00_Штаб_проекта.md",
+  "summary": "Локальный Cyber-HUD (:8790) для глубокой интеллектуальной очистки macOS и 3-контурной телеметрии хранилища."
+}

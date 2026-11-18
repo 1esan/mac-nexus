@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -16,10 +17,15 @@ from typing import Any
 
 from .scanner import (
     DuplicateFileTarget,
+    MONITORED_APPS,
     OffloadTarget,
+    PROJECT_ARTIFACT_NAMES,
+    RadarTarget,
+    SSD_SHELVES,
     ScanEnvironment,
     ScanSnapshot,
     ScanTarget,
+    TrashEntryTarget,
     _dir_size_and_latest_mtime,
     _iso_from_ts,
     _run_cmd,
@@ -29,6 +35,12 @@ from .scanner import (
     load_history,
     ssd_is_mounted,
 )
+
+_SMART_CLOSE_TIMEOUT_SEC = 10.0
+_SMART_CLOSE_POLL_SEC = 0.4
+_APP_PROC_NAMES: dict[str, tuple[str, ...]] = {
+    app_key: proc_names for proc_names, app_key, _ in MONITORED_APPS
+}
 
 
 class LiveLockError(RuntimeError):
@@ -264,6 +276,22 @@ def _recheck_target_lock(target: ScanTarget, env: ScanEnvironment, locks: dict[s
             if lsof_proc.returncode == 0 and len(lsof_proc.stdout.splitlines()) > 1:
                 return True, f"На образе {mp.name} открыты файлы"
 
+    if target.category == "ai_dev_deep":
+        hermes_guarded = (
+            env.home / ".hermes/hermes-agent/.worktrees",
+            env.home / ".hermes/cache",
+            env.home / ".hermes/logs",
+        )
+        if any(str(_safe_resolve(p)).startswith(str(_safe_resolve(g))) for p in target.paths for g in hermes_guarded):
+            h_proc = _run_cmd(env, ["pgrep", "-fi", "hermes"], timeout=1.5)
+            if h_proc.returncode == 0 and h_proc.stdout.strip():
+                return True, "Процесс Hermes активен — остановите агента перед очисткой"
+        codex_guarded = (env.home / ".codex/.tmp", env.home / ".codex/cache")
+        if any(_safe_resolve(p) in {_safe_resolve(g) for g in codex_guarded} for p in target.paths):
+            c_proc = _run_cmd(env, ["pgrep", "-x", "codex"], timeout=1.5)
+            if c_proc.returncode == 0 and c_proc.stdout.strip():
+                return True, "Процесс Codex запущен — закройте его перед очисткой .tmp/cache"
+
     return False, None
 
 
@@ -301,6 +329,69 @@ def _clear_cache_dir_contents(cache_dir: Path, env: ScanEnvironment, live_wt: se
     except OSError:
         return 0
     return freed if freed > 0 else before_size
+
+
+def _clean_cache_target_paths(
+    paths: list[Path],
+    env: ScanEnvironment,
+    live_wt: set[str],
+    broker: EventBroker,
+    job_id: str,
+    label: str,
+) -> int:
+    reclaimed = 0
+    for d in paths:
+        reclaimed += _clear_cache_dir_contents(d, env, live_wt)
+    broker.publish("log", f"[DONE] Очищен безопасный кэш: {label}", job_id=job_id)
+    return reclaimed
+
+
+def _trash_target_paths(
+    paths: list[Path],
+    env: ScanEnvironment,
+    live_wt: set[str],
+    broker: EventBroker,
+    job_id: str,
+    label: str,
+) -> int:
+    reclaimed = 0
+    moved = 0
+    for fp in paths:
+        ok, _, bytes_moved, err = move_to_trash(fp, env, live_wt)
+        if ok:
+            reclaimed += bytes_moved
+            moved += 1
+        elif err:
+            broker.publish("log", f"[LOCK-GUARD] {err}", job_id=job_id)
+    broker.publish("log", f"[DONE] Перемещено в ~/.Trash: {moved} объектов ({label})", job_id=job_id)
+    return reclaimed
+
+
+def _remove_codex_runtime_artifacts(
+    paths: list[Path],
+    env: ScanEnvironment,
+    live_wt: set[str],
+    broker: EventBroker,
+    job_id: str,
+) -> int:
+    """Delete ONLY verified stale codex-runtime-install-* directories inside ~/.cache/codex-runtimes."""
+    runtimes_root = _safe_resolve(env.home / ".cache/codex-runtimes")
+    reclaimed = 0
+    for art_dir in paths:
+        if not art_dir.exists() or not art_dir.is_dir() or art_dir.is_symlink():
+            continue
+        if art_dir.name == "codex-primary-runtime" or not art_dir.name.startswith("codex-runtime-install-"):
+            continue
+        resolved_art = _safe_resolve(art_dir)
+        if resolved_art.parent != runtimes_root:
+            continue
+        if is_protected_path(art_dir, env, live_wt):
+            continue
+        sz, _ = _dir_size_and_latest_mtime(art_dir)
+        shutil.rmtree(art_dir, ignore_errors=False)
+        reclaimed += sz
+        broker.publish("log", f"[DONE] Удалён устаревший Codex runtime: {art_dir.name}", job_id=job_id)
+    return reclaimed
 
 
 def _execute_single_target(
@@ -360,35 +451,56 @@ def _execute_single_target(
             reclaimed = target.estimated_bytes
             broker.publish("log", "[DONE] conda clean -y --all выполнен", job_id=job_id)
         elif tool == "nuget":
-            for p in target.paths:
-                reclaimed += _clear_cache_dir_contents(p, env, live_wt)
-            broker.publish("log", "[DONE] NuGet кэш очищен", job_id=job_id)
+            reclaimed += _clean_cache_target_paths(target.paths, env, live_wt, broker, job_id, "NuGet кэш")
+        elif tool == "go":
+            if env.go_bin.exists():
+                before = sum(_dir_size_and_latest_mtime(p)[0] for p in target.paths if p.exists())
+                proc = _run_cmd(env, [str(env.go_bin), "clean", "-modcache"], timeout=60.0)
+                after = sum(_dir_size_and_latest_mtime(p)[0] for p in target.paths if p.exists())
+                reclaimed = max(0, before - after)
+                broker.publish("log", f"[DONE] go clean -modcache (rc={proc.returncode})", job_id=job_id)
+            else:
+                reclaimed += _clean_cache_target_paths(
+                    target.paths, env, live_wt, broker, job_id, "Go module cache"
+                )
+        elif tool == "cargo":
+            reclaimed += _clean_cache_target_paths(
+                target.paths, env, live_wt, broker, job_id, "Cargo кэш (.crate)"
+            )
 
     elif target.category == "app_cache":
-        for d in target.paths:
-            reclaimed += _clear_cache_dir_contents(d, env, live_wt)
-        broker.publish("log", f"[DONE] Очищен безопасный кэш: {target.title}", job_id=job_id)
+        reclaimed += _clean_cache_target_paths(target.paths, env, live_wt, broker, job_id, target.title)
 
     elif target.category == "downloads_inbox":
         if target.action_kind == "trash":
-            moved = 0
-            for fp in target.paths:
-                ok, _, bytes_moved, err = move_to_trash(fp, env, live_wt)
-                if ok:
-                    reclaimed += bytes_moved
-                    moved += 1
-                elif err:
-                    broker.publish("log", f"[LOCK-GUARD] {err}", job_id=job_id)
-            broker.publish("log", f"[DONE] Перемещено в ~/.Trash: {moved} объектов ({target.title})", job_id=job_id)
+            reclaimed += _trash_target_paths(target.paths, env, live_wt, broker, job_id, target.title)
         elif target.action_kind == "organize" and env.organize_bin.exists():
             proc = _run_cmd(env, [str(env.organize_bin), "run"], timeout=120.0)
             broker.publish("log", f"[DONE] organize run завершён (rc={proc.returncode})", job_id=job_id)
+
+    elif target.category in {"system_cache", "app_orphans", "ai_dev_deep"}:
+        if target.action_kind == "clean_cache":
+            reclaimed += _clean_cache_target_paths(target.paths, env, live_wt, broker, job_id, target.title)
+        elif target.action_kind == "trash":
+            reclaimed += _trash_target_paths(target.paths, env, live_wt, broker, job_id, target.title)
+        elif target.action_kind == "rm_artifact" and target.category == "ai_dev_deep":
+            reclaimed += _remove_codex_runtime_artifacts(target.paths, env, live_wt, broker, job_id)
+        elif target.action_kind == "docker_prune" and target.tool_name == "docker":
+            img_proc = _run_cmd(env, [str(env.docker_bin), "image", "prune", "-f"], timeout=60.0)
+            bld_proc = _run_cmd(env, [str(env.docker_bin), "builder", "prune", "-f"], timeout=60.0)
+            broker.publish(
+                "log",
+                f"[DONE] docker image prune (rc={img_proc.returncode}), builder prune (rc={bld_proc.returncode})",
+                job_id=job_id,
+            )
+            if img_proc.returncode == 0 and bld_proc.returncode == 0:
+                reclaimed = target.estimated_bytes
 
     elif target.category == "dev_projects":
         for art_dir in target.paths:
             if not art_dir.exists() or art_dir.is_symlink():
                 continue
-            if art_dir.name not in {"node_modules", ".venv", "venv", ".pytest_cache", "__pycache__", "target"}:
+            if art_dir.name not in PROJECT_ARTIFACT_NAMES:
                 continue
             if not str(_safe_resolve(art_dir)).startswith(str(_safe_resolve(env.projects_dir)) + os.sep):
                 continue
@@ -593,6 +705,404 @@ def trash_duplicate_files(
     }
 
 
+def _is_app_running(env: ScanEnvironment, proc_names: tuple[str, ...]) -> bool:
+    for pname in proc_names:
+        proc = _run_cmd(env, ["pgrep", "-x", pname], timeout=2.0)
+        if proc.returncode == 0 and proc.stdout.strip():
+            return True
+    return False
+
+
+def start_smart_close_clean_job(
+    env: ScanEnvironment,
+    snapshot: ScanSnapshot,
+    item_id: str,
+    reopen: bool,
+    dry_run: bool,
+    broker: EventBroker,
+    history: HistoryStore,
+) -> str:
+    """Gracefully quit an allowlisted GUI app, clean cache after process exit, and optionally reopen."""
+    tgt = snapshot.items_by_id.get(item_id)
+    if tgt is None:
+        raise UnknownTargetError(f"Неизвестный или устаревший идентификатор: {item_id}")
+
+    if tgt.app_key in {"orca", "vscode"}:
+        raise LiveLockError(f"Smart Close запрещён для {tgt.app_label or tgt.app_key} (защита активной среды)")
+
+    if tgt.category != "app_cache" or not tgt.quittable or not tgt.quit_app_name:
+        raise LiveLockError(f"Smart Close недоступен для цели: {tgt.title}")
+
+    app_name = tgt.quit_app_name
+    if any(ch in app_name for ch in ('"', "'", "\\", "\n", "\r")):
+        raise LiveLockError(f"Недопустимое имя приложения: {app_name}")
+
+    proc_names = _APP_PROC_NAMES.get(tgt.app_key or "", (app_name,))
+    job_id = f"smart_{uuid.uuid4().hex[:10]}"
+
+    def worker() -> None:
+        total_reclaimed = 0
+        try:
+            if dry_run:
+                broker.publish(
+                    "progress",
+                    f"[DRY-RUN] Smart Close план для {app_name}",
+                    job_id=job_id,
+                )
+                broker.publish(
+                    "log",
+                    f"[DRY-RUN] 1) Мягкое закрытие {app_name} (osascript) и ожидание завершения (до 10с)",
+                    job_id=job_id,
+                )
+                broker.publish(
+                    "log",
+                    f"[DRY-RUN] 2) Очистка {len(tgt.paths)} папок кэша (~{tgt.estimated_bytes} Б) без SQLite БД",
+                    job_id=job_id,
+                )
+                if reopen:
+                    broker.publish(
+                        "log",
+                        f"[DRY-RUN] 3) Перезапуск приложения {app_name}",
+                        job_id=job_id,
+                    )
+                return
+
+            broker.publish(
+                "progress",
+                f"[LOCK-GUARD] Smart Close: закрытие {app_name}...",
+                job_id=job_id,
+            )
+            _run_cmd(env, ["osascript", "-e", f'tell application "{app_name}" to quit'], timeout=8.0)
+
+            deadline = time.monotonic() + _SMART_CLOSE_TIMEOUT_SEC
+            still_running = True
+            while True:
+                still_running = _is_app_running(env, proc_names)
+                if not still_running:
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(_SMART_CLOSE_POLL_SEC)
+
+            if still_running:
+                broker.publish(
+                    "log",
+                    f"[LOCK-GUARD] Таймаут закрытия {app_name} — кэш не тронут (защита SQLite WAL)",
+                    job_id=job_id,
+                )
+                return
+
+            locks = detect_live_locks(env)
+            live_wt = locks["live_worktree_paths"]
+            if tgt.app_key and tgt.app_key in locks["running_apps"]:
+                broker.publish(
+                    "log",
+                    f"[LOCK-GUARD] Приложение {app_name} снова запущено — кэш не тронут (защита SQLite WAL)",
+                    job_id=job_id,
+                )
+                return
+
+            reclaimed = 0
+            for d in tgt.paths:
+                if is_protected_path(d, env, live_wt):
+                    continue
+                reclaimed += _clear_cache_dir_contents(d, env, live_wt)
+
+            total_reclaimed = reclaimed
+            if reclaimed > 0:
+                history.record_reclaimed(reclaimed)
+                broker.publish(
+                    "reclaimed",
+                    f"[DONE] Освобождено {reclaimed} Б ({tgt.title})",
+                    bytes_val=reclaimed,
+                    job_id=job_id,
+                )
+            else:
+                broker.publish("log", f"[DONE] Кэш {tgt.title} уже пуст", job_id=job_id)
+
+            if reopen:
+                _run_cmd(env, ["open", "-a", app_name], timeout=6.0)
+                broker.publish("log", f"[DONE] Приложение перезапущено ({app_name})", job_id=job_id)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            broker.publish("log", f"[LOCK-GUARD] Ошибка Smart Close {job_id}: {exc}", job_id=job_id)
+        finally:
+            summary_msg = (
+                f"[DRY-RUN] Smart Close симуляция завершена ({app_name})"
+                if dry_run
+                else f"[DONE] Smart Close завершён ({app_name}): освобождено {total_reclaimed} Б"
+            )
+            broker.publish("done", summary_msg, bytes_val=total_reclaimed, job_id=job_id)
+
+    t = threading.Thread(target=worker, name=f"nexus-{job_id}", daemon=True)
+    t.start()
+    return job_id
+
+
+def _radar_teleport_dest_dir(env: ScanEnvironment, shelf: str, mtime_ts: float) -> Path:
+    ym = datetime.fromtimestamp(mtime_ts, tz=timezone.utc).astimezone().strftime("%Y-%m")
+    return env.ssd_mount / shelf / "Manual_Offload" / ym
+
+
+def start_radar_action_job(
+    env: ScanEnvironment,
+    snapshot: ScanSnapshot,
+    radar_ids: list[str],
+    action: str,
+    shelf: str,
+    dry_run: bool,
+    broker: EventBroker,
+    history: HistoryStore,
+) -> str:
+    """Validate Deep Radar targets and execute Trash or SHA-256 SSD teleport in background."""
+    if not radar_ids:
+        raise UnknownTargetError("Список radar_ids пуст")
+    if action not in {"trash", "teleport_ssd"}:
+        raise UnknownTargetError(f"Недопустимое действие Deep Radar: {action}")
+    if shelf not in SSD_SHELVES:
+        raise UnknownTargetError(f"Недопустимая полка SSD: {shelf}")
+
+    locks = detect_live_locks(env)
+    live_wt = locks["live_worktree_paths"]
+    targets: list[RadarTarget] = []
+    seen_ids: set[str] = set()
+
+    for rid in radar_ids:
+        if rid in seen_ids:
+            continue
+        seen_ids.add(rid)
+        tgt = snapshot.radar_by_id.get(rid)
+        if tgt is None:
+            raise UnknownTargetError(f"Неизвестный radar_id: {rid}")
+        if is_protected_path(tgt.path, env, live_wt):
+            raise LiveLockError(f"Защищённый путь: {tgt.title}")
+        if tgt.kind == "hotspot":
+            raise LiveLockError(f"X-Ray точка ({tgt.title}) защищена от удаления/переноса")
+        if action == "trash" and not tgt.can_trash:
+            raise LiveLockError(f"Удаление в Корзину запрещено для {tgt.title}")
+        if action == "teleport_ssd":
+            if not tgt.can_teleport:
+                raise LiveLockError(f"Телепорт на SSD запрещён для {tgt.title}")
+            if not tgt.path.exists() or not tgt.path.is_file() or tgt.path.is_symlink():
+                raise LiveLockError(f"Телепорт доступен только для существующих файлов: {tgt.title}")
+        targets.append(tgt)
+
+    if action == "teleport_ssd" and not dry_run and not ssd_is_mounted(env):
+        raise LiveLockError("Внешний SSD /Volumes/secret for mine не смонтирован")
+
+    job_id = f"radar_{uuid.uuid4().hex[:10]}"
+
+    def worker() -> None:
+        total_reclaimed = 0
+        try:
+            tag = "[DRY-RUN]" if dry_run else ("[SHA-256]" if action == "teleport_ssd" else "[TRASH]")
+            broker.publish("progress", f"{tag} Deep Radar: {len(targets)} объектов ({action})", job_id=job_id)
+
+            for idx, tgt in enumerate(targets, start=1):
+                if dry_run:
+                    if action == "teleport_ssd":
+                        dest_dir = _radar_teleport_dest_dir(env, shelf, tgt.mtime_ts)
+                        broker.publish(
+                            "log",
+                            f"[DRY-RUN] SHA-256 план: {tgt.rel_path} -> {dest_dir / tgt.path.name}",
+                            job_id=job_id,
+                        )
+                    else:
+                        broker.publish(
+                            "log",
+                            f"[DRY-RUN] Корзина план: {tgt.rel_path} -> {env.trash_dir / tgt.path.name}",
+                            job_id=job_id,
+                        )
+                elif action == "trash":
+                    ok, dest, size_bytes, err = move_to_trash(tgt.path, env, live_wt)
+                    if not ok:
+                        broker.publish("log", f"[LOCK-GUARD] {err}", job_id=job_id)
+                        continue
+                    total_reclaimed += size_bytes
+                    history.record_reclaimed(size_bytes)
+                    broker.publish(
+                        "reclaimed",
+                        f"[DONE] В Корзину: {tgt.path.name} -> {dest}",
+                        bytes_val=size_bytes,
+                        job_id=job_id,
+                    )
+                else:
+                    dest_dir = _radar_teleport_dest_dir(env, shelf, tgt.mtime_ts)
+                    off_tgt = OffloadTarget(
+                        media_id=tgt.radar_id,
+                        name=tgt.path.name,
+                        source_path=tgt.path,
+                        rel_path=tgt.rel_path,
+                        ext=tgt.path.suffix.lstrip(".").lower(),
+                        size_bytes=tgt.size_bytes,
+                        mtime_ts=tgt.mtime_ts,
+                        dest_dir=dest_dir,
+                    )
+                    ok, dest, size_bytes, info = teleport_file_sha256(off_tgt, False, env, live_wt)
+                    if not ok:
+                        broker.publish("log", f"[LOCK-GUARD] {info}", job_id=job_id)
+                        continue
+                    total_reclaimed += size_bytes
+                    history.record_reclaimed(size_bytes)
+                    broker.publish(
+                        "reclaimed",
+                        f"[SHA-256] OK ({info[:12]}...): {tgt.path.name} -> {dest}",
+                        bytes_val=size_bytes,
+                        job_id=job_id,
+                    )
+
+                broker.publish("progress", f"[RADAR] Обработано {idx}/{len(targets)}", job_id=job_id)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            broker.publish("log", f"[LOCK-GUARD] Ошибка Deep Radar {job_id}: {exc}", job_id=job_id)
+        finally:
+            done_msg = (
+                f"[DRY-RUN] Deep Radar симуляция завершена ({len(targets)} объектов)"
+                if dry_run
+                else f"[DONE] Deep Radar завершён: освобождено {total_reclaimed} Б"
+            )
+            broker.publish("done", done_msg, bytes_val=total_reclaimed, job_id=job_id)
+
+    t = threading.Thread(target=worker, name=f"nexus-{job_id}", daemon=True)
+    t.start()
+    return job_id
+
+
+def reveal_radar_target(
+    env: ScanEnvironment,
+    snapshot: ScanSnapshot,
+    radar_id: str,
+) -> dict[str, Any]:
+    """Reveal a validated Deep Radar target in Finder via `open -R`."""
+    tgt = snapshot.radar_by_id.get(radar_id)
+    if tgt is None:
+        raise UnknownTargetError(f"Неизвестный radar_id: {radar_id}")
+    if not tgt.path.exists():
+        raise UnknownTargetError(f"Объект больше не существует: {tgt.path}")
+
+    proc = _run_cmd(env, ["open", "-R", str(tgt.path)], timeout=5.0)
+    if proc.returncode != 0:
+        raise RuntimeError(f"Не удалось открыть в Finder: {proc.stderr.strip() or proc.returncode}")
+    return {"ok": True}
+
+
+def _verify_inside_trash(path: Path, trash_dir: Path) -> None:
+    resolved_trash = _safe_resolve(trash_dir)
+    resolved_path = _safe_resolve(path)
+    if path == trash_dir or resolved_path == resolved_trash:
+        raise LiveLockError("Отказ: запрещено удалять корневую папку ~/.Trash")
+    try:
+        resolved_path.relative_to(resolved_trash)
+    except ValueError as exc:
+        raise LiveLockError(f"Отказ: путь вне пределов ~/.Trash ({path})") from exc
+
+
+def purge_trash_items(
+    env: ScanEnvironment,
+    snapshot: ScanSnapshot,
+    mode: str,
+    trash_ids: list[str],
+    older_days: float,
+    dry_run: bool,
+    broker: EventBroker,
+    history: HistoryStore,
+) -> dict[str, Any]:
+    """Permanently purge verified entries inside ~/.Trash or trigger Finder empty trash."""
+    if mode not in {"selected", "older_than", "finder_empty"}:
+        raise UnknownTargetError(f"Недопустимый режим очистки Корзины: {mode}")
+
+    if mode == "finder_empty":
+        if dry_run:
+            broker.publish("log", "[DRY-RUN] Finder empty trash preview")
+            return {
+                "ok": True,
+                "dry_run": True,
+                "purged_count": 0,
+                "reclaimed_bytes": 0,
+                "message": "DRY-RUN: Finder empty trash preview",
+            }
+        proc = _run_cmd(env, ["osascript", "-e", 'tell application "Finder" to empty trash'], timeout=30.0)
+        if proc.returncode != 0:
+            raise RuntimeError(f"Finder не смог очистить Корзину: {proc.stderr.strip() or proc.returncode}")
+        snapshot.trash_by_id.clear()
+        broker.publish("done", "[DONE] Очистка Корзины выполнена через Finder", bytes_val=0)
+        return {
+            "ok": True,
+            "dry_run": False,
+            "purged_count": -1,
+            "reclaimed_bytes": 0,
+        }
+
+    targets: list[TrashEntryTarget] = []
+    if mode == "selected":
+        if not trash_ids:
+            raise UnknownTargetError("Список trash_ids пуст")
+        seen_ids: set[str] = set()
+        for tid in trash_ids:
+            if tid in seen_ids:
+                continue
+            seen_ids.add(tid)
+            tgt = snapshot.trash_by_id.get(tid)
+            if tgt is None:
+                raise UnknownTargetError(f"Неизвестный trash_id: {tid}")
+            targets.append(tgt)
+    else:
+        threshold = float(older_days)
+        targets = [t for t in snapshot.trash_by_id.values() if t.age_days >= threshold]
+
+    for tgt in targets:
+        _verify_inside_trash(tgt.path, env.trash_dir)
+
+    if dry_run:
+        preview_bytes = sum(t.size_bytes for t in targets)
+        broker.publish(
+            "log",
+            f"[DRY-RUN] Симуляция очистки Корзины ({mode}): {len(targets)} объектов (~{preview_bytes} Б)",
+        )
+        return {
+            "ok": True,
+            "dry_run": True,
+            "purged_count": len(targets),
+            "reclaimed_bytes": preview_bytes,
+        }
+
+    purged = 0
+    total_reclaimed = 0
+    for tgt in targets:
+        _verify_inside_trash(tgt.path, env.trash_dir)
+        p = tgt.path
+        if not p.exists() and not p.is_symlink():
+            snapshot.trash_by_id.pop(tgt.trash_id, None)
+            continue
+        try:
+            if p.is_symlink() or p.is_file():
+                p.unlink()
+            elif p.is_dir():
+                shutil.rmtree(p)
+            purged += 1
+            total_reclaimed += tgt.size_bytes
+            snapshot.trash_by_id.pop(tgt.trash_id, None)
+        except OSError as exc:
+            broker.publish("log", f"[LOCK-GUARD] Не удалось удалить {tgt.name}: {exc}")
+
+    if total_reclaimed > 0:
+        history.record_reclaimed(total_reclaimed)
+        broker.publish(
+            "reclaimed",
+            f"[DONE] Удалено из Корзины: {purged} объектов ({total_reclaimed} Б)",
+            bytes_val=total_reclaimed,
+        )
+    broker.publish(
+        "done",
+        f"[DONE] Очистка Корзины завершена: {purged} объектов ({total_reclaimed} Б)",
+        bytes_val=total_reclaimed,
+    )
+    return {
+        "ok": True,
+        "dry_run": False,
+        "purged_count": purged,
+        "reclaimed_bytes": total_reclaimed,
+    }
+
+
 def open_tool(env: ScanEnvironment, tool: str) -> dict[str, Any]:
     """Open allowlisted local app/folder or return latest Sunday hygiene digest."""
     if tool == "digest":
@@ -608,6 +1118,7 @@ def open_tool(env: ScanEnvironment, tool: str) -> dict[str, Any]:
         "daisydisk": ["open", "-a", "/Applications/DaisyDisk.app"],
         "finder_ssd": ["open", str(env.ssd_mount)],
         "finder_downloads": ["open", str(env.downloads_dir)],
+        "finder_trash": ["open", str(env.trash_dir)],
     }
     if tool not in allowlist:
         raise UnknownTargetError(f"Недопустимый инструмент: {tool}")
