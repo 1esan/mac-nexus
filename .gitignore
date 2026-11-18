@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+*.egg-info/
+dist/
+build/
+
+# macOS & Icons
+.DS_Store
+*.iconset/
+
+# Logs & Runtime State
+logs/
+*.log
+
+# Secrets & Environment
+.env
+.env.*

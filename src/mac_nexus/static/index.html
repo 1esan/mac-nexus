@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>Mac Nexus — Orbital Storage &amp; Telemetry HUD</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <canvas id="orbital-canvas" aria-hidden="true"></canvas>
+  <div class="holo-scanlines" aria-hidden="true"></div>
+  <div class="ambient-vignette" aria-hidden="true"></div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <div class="hud-shell">
+    <!-- Top Command Header -->
+    <header class="hud-header hud-panel">
+      <div class="hud-corners" aria-hidden="true"><span></span><span></span></div>
+
+      <div class="brand-cluster">
+        <div class="nexus-emblem" aria-hidden="true">
+          <svg viewBox="0 0 48 48" class="emblem-svg">
+            <circle cx="24" cy="24" r="21" class="emblem-ring-outer" />
+            <circle cx="24" cy="24" r="14" class="emblem-ring-inner" />
+            <circle cx="24" cy="24" r="5" class="emblem-core" />
+            <line x1="24" y1="2" x2="24" y2="9" class="emblem-tick" />
+            <line x1="24" y1="39" x2="24" y2="46" class="emblem-tick" />
+            <line x1="2" y1="24" x2="9" y2="24" class="emblem-tick" />
+            <line x1="39" y1="24" x2="46" y2="24" class="emblem-tick" />
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title-row">
+            <h1 class="brand-title">MAC NEXUS</h1>
+            <span class="hud-version-tag">ORBITAL HUD v1.0</span>
+          </div>
+          <p class="brand-subtitle">КОМАНДНЫЙ КОНТУР ХРАНИЛИЩА &amp; ТЕЛЕМЕТРИИ // APPLE SILICON M4</p>
+        </div>
+      </div>
+
+      <div class="header-status-cluster">
+        <div id="radar-sweep-widget" class="radar-widget" title="Статус сканера">
+          <div class="radar-disc">
+            <span class="radar-grid-cross"></span>
+            <span class="radar-sweep-arm"></span>
+            <span class="radar-center-dot"></span>
+          </div>
+          <div class="radar-meta">
+            <span class="radar-label">РАДАР</span>
+            <span id="radar-state-text" class="radar-value">ОЖИДАНИЕ</span>
+          </div>
+        </div>
+
+        <div class="conn-pills">
+          <span id="pill-api-status" class="status-pill status-pill--pending">
+            <span class="pulse-dot"></span>
+            <span>API: ПОДКЛЮЧЕНИЕ</span>
+          </span>
+          <span id="pill-sse-status" class="status-pill status-pill--pending">
+            <span class="pulse-dot"></span>
+            <span>SSE: ОЖИДАНИЕ</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="header-controls-cluster">
+        <button
+          id="dry-run-toggle"
+          type="button"
+          class="dry-run-pill dry-run-pill--safe"
+          role="switch"
+          aria-checked="true"
+          title="Переключить режим симуляции DRY-RUN / боевое выполнение"
+        >
+          <span class="dry-run-led" aria-hidden="true"></span>
+          <span class="dry-run-copy">
+            <span class="dry-run-title">DRY-RUN</span>
+            <span id="dry-run-state-label" class="dry-run-sub">ВКЛ · БЕЗОПАСНО</span>
+          </span>
+          <span class="dry-run-switch" aria-hidden="true">
+            <span class="dry-run-knob"></span>
+          </span>
+        </button>
+
+        <button id="btn-refresh-all" type="button" class="btn-cyber btn-cyber--ghost" title="Обновить телеметрию и скан">
+          <svg viewBox="0 0 24 24" class="btn-icon" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <polyline points="21 3 21 9 15 9" />
+          </svg>
+          <span>ОБНОВИТЬ</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Top Orbital Telemetry Deck -->
+    <section class="telemetry-deck" aria-label="Орбитальная телеметрия контуров">
+      <div class="reactor-grid">
+        <!-- Reactor 1: Internal NVMe -->
+        <article id="reactor-nvme" class="reactor-card hud-panel reactor-card--cyan">
+          <div class="hud-corners" aria-hidden="true"><span></span><span></span></div>
+          <div class="reactor-card-head">
+            <span class="reactor-index">01</span>
+            <div class="reactor-headings">
+              <h2 class="reactor-title">Контур 1: Internal NVMe</h2>
+              <span id="nvme-mount" class="reactor-mount">/System/Volumes/Data</span>
+            </div>
+            <span id="nvme-status-badge" class="badge-chip badge-chip--cyan">ONLINE</span>
+          </div>
+
+          <div class="reactor-body">
+            <div class="reactor-svg-wrap">
+              <svg viewBox="0 0 180 180" class="reactor-svg" aria-hidden="true">
+                <circle cx="90" cy="90" r="82" class="ring-reticle" />
+                <circle cx="90" cy="90" r="68" class="ring-track" />
+                <circle id="nvme-arc-main" cx="90" cy="90" r="68" class="ring-progress ring-progress--cyan" />
+                <circle cx="90" cy="90" r="53" class="ring-track-inner" />
+                <circle id="nvme-arc-inner" cx="90" cy="90" r="53" class="ring-progress-inner ring-progress--emerald" />
+              </svg>
+              <div class="reactor-center-readout">
+                <span id="nvme-percent" class="reactor-pct">--%</span>
+                <span class="reactor-pct-label">ЗАНЯТО</span>
+              </div>
+            </div>
+
+            <div class="reactor-metrics">
+              <div class="metric-row">
+                <span class="metric-key">Занято / Всего</span>
+                <span id="nvme-used-total" class="metric-val">-- / --</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Свободно</span>
+                <span id="nvme-free" class="metric-val metric-val--emerald">--</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Purgeable APFS</span>
+                <span id="nvme-purgeable" class="metric-val metric-val--cyan">--</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Объём GiB</span>
+                <span id="nvme-gib-detail" class="metric-val metric-val--dim">--</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Reactor 2: External APFS SSD -->
+        <article id="reactor-ssd" class="reactor-card hud-panel reactor-card--violet">
+          <div class="hud-corners" aria-hidden="true"><span></span><span></span></div>
+          <div class="reactor-card-head">
+            <span class="reactor-index">02</span>
+            <div class="reactor-headings">
+              <h2 class="reactor-title">Контур 2: External APFS SSD</h2>
+              <span id="ssd-mount" class="reactor-mount">/Volumes/secret for mine</span>
+            </div>
+            <span id="ssd-status-badge" class="badge-chip badge-chip--violet">ПРОВЕРКА</span>
+          </div>
+
+          <div class="reactor-body">
+            <div class="reactor-svg-wrap">
+              <svg viewBox="0 0 180 180" class="reactor-svg" aria-hidden="true">
+                <circle cx="90" cy="90" r="82" class="ring-reticle" />
+                <circle cx="90" cy="90" r="68" class="ring-track" />
+                <circle id="ssd-arc-main" cx="90" cy="90" r="68" class="ring-progress ring-progress--violet" />
+                <circle cx="90" cy="90" r="53" class="ring-track-inner" />
+                <circle id="ssd-arc-inner" cx="90" cy="90" r="53" class="ring-progress-inner ring-progress--cyan" />
+              </svg>
+              <div class="reactor-center-readout">
+                <span id="ssd-percent" class="reactor-pct">--%</span>
+                <span id="ssd-center-label" class="reactor-pct-label">ЗАНЯТО</span>
+              </div>
+            </div>
+
+            <div class="reactor-metrics">
+              <div class="metric-row">
+                <span class="metric-key">Занято / Всего</span>
+                <span id="ssd-used-total" class="metric-val">-- / --</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Свободно</span>
+                <span id="ssd-free" class="metric-val metric-val--emerald">--</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Файловая система</span>
+                <span id="ssd-fs-type" class="metric-val metric-val--violet">--</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Полки 01..99</span>
+                <span id="ssd-shelves-summary" class="metric-val metric-val--dim">--</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Reactor 3: SecondBrain iCloud -->
+        <article id="reactor-secondbrain" class="reactor-card hud-panel reactor-card--emerald">
+          <div class="hud-corners" aria-hidden="true"><span></span><span></span></div>
+          <div class="reactor-card-head">
+            <span class="reactor-index">03</span>
+            <div class="reactor-headings">
+              <h2 class="reactor-title">Контур 3: SecondBrain iCloud</h2>
+              <span id="sb-path" class="reactor-mount">iCloud Knowledge Plane</span>
+            </div>
+            <span id="sb-status-badge" class="badge-chip badge-chip--emerald">SYNC</span>
+          </div>
+
+          <div class="reactor-body">
+            <div class="reactor-svg-wrap">
+              <svg viewBox="0 0 180 180" class="reactor-svg" aria-hidden="true">
+                <circle cx="90" cy="90" r="82" class="ring-reticle" />
+                <circle cx="90" cy="90" r="68" class="ring-track" />
+                <circle id="sb-arc-main" cx="90" cy="90" r="68" class="ring-progress ring-progress--emerald" />
+                <circle cx="90" cy="90" r="53" class="ring-track-inner" />
+                <circle id="sb-arc-inner" cx="90" cy="90" r="53" class="ring-progress-inner ring-progress--cyan" />
+              </svg>
+              <div class="reactor-center-readout">
+                <span id="sb-notes-big" class="reactor-pct">--</span>
+                <span class="reactor-pct-label">ЗАМЕТОК .MD</span>
+              </div>
+            </div>
+
+            <div class="reactor-metrics">
+              <div class="metric-row">
+                <span class="metric-key">Размер контура</span>
+                <span id="sb-size" class="metric-val">--</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Markdown заметки</span>
+                <span id="sb-notes-count" class="metric-val metric-val--cyan">--</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Статус iCloud</span>
+                <span id="sb-mounted" class="metric-val metric-val--emerald">--</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-key">Риск node_modules</span>
+                <span id="sb-risk" class="metric-val">--</span>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <!-- Live Telemetry Chips + Animated Odometer -->
+      <div class="telemetry-chips-bar">
+        <div class="tele-chip hud-panel">
+          <div class="tele-chip-label">M4 RAM</div>
+          <div id="chip-ram-value" class="tele-chip-value">-- / --</div>
+          <div id="chip-ram-sub" class="tele-chip-sub">CPU 1m: --</div>
+        </div>
+
+        <div class="tele-chip hud-panel">
+          <div class="tele-chip-label">Swap</div>
+          <div id="chip-swap-value" class="tele-chip-value">--</div>
+          <div id="chip-swap-sub" class="tele-chip-sub">Давление: --</div>
+        </div>
+
+        <div class="tele-chip hud-panel">
+          <div class="tele-chip-label">Призрачные DMG</div>
+          <div id="chip-dmg-value" class="tele-chip-value">--</div>
+          <div id="chip-dmg-sub" class="tele-chip-sub">hdiutil контроль</div>
+        </div>
+
+        <div class="tele-chip hud-panel">
+          <div class="tele-chip-label">Живые агенты Orca</div>
+          <div id="chip-orca-value" class="tele-chip-value">--</div>
+          <div id="chip-orca-sub" class="tele-chip-sub">Защита LIVE LOCK</div>
+        </div>
+
+        <div class="tele-chip tele-chip--odometer hud-panel">
+          <div class="odometer-head">
+            <span class="odometer-label">ВСЕГО ОСВОБОЖДЕНО</span>
+            <span id="odometer-delta" class="odometer-delta" hidden>+0 МБ</span>
+          </div>
+          <div id="odometer-value" class="odometer-value">0.00 GiB</div>
+          <div id="odometer-sub" class="tele-chip-sub">Последний запуск: нет данных</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 Interactive Command Modules -->
+    <main class="command-workspace hud-panel">
+      <div class="hud-corners" aria-hidden="true"><span></span><span></span></div>
+
+      <nav class="tab-bar" role="tablist" aria-label="Командные модули Mac Nexus">
+        <button id="tab-btn-radar" type="button" role="tab" aria-selected="true" aria-controls="panel-radar" class="tab-btn is-active" data-tab="radar">
+          <span class="tab-code">01</span>
+          <span class="tab-label">РАДАР ОЧИСТКИ</span>
+          <span id="badge-tab-radar" class="tab-badge">0</span>
+        </button>
+
+        <button id="tab-btn-teleport" type="button" role="tab" aria-selected="false" aria-controls="panel-teleport" class="tab-btn" data-tab="teleport">
+          <span class="tab-code">02</span>
+          <span class="tab-label">ТЕЛЕПОРТ НА SSD</span>
+          <span id="badge-tab-teleport" class="tab-badge">0</span>
+        </button>
+
+        <button id="tab-btn-duplicates" type="button" role="tab" aria-selected="false" aria-controls="panel-duplicates" class="tab-btn" data-tab="duplicates">
+          <span class="tab-code">03</span>
+          <span class="tab-label">ДУБЛИКАТЫ</span>
+          <span id="badge-tab-duplicates" class="tab-badge">0</span>
+        </button>
+
+        <button id="tab-btn-planes" type="button" role="tab" aria-selected="false" aria-controls="panel-planes" class="tab-btn" data-tab="planes">
+          <span class="tab-code">04</span>
+          <span class="tab-label">ПУЛЬТ КОНТУРОВ</span>
+        </button>
+      </nav>
+
+      <!-- TAB 1: РАДАР ОЧИСТКИ -->
+      <section id="panel-radar" class="tab-panel is-active" role="tabpanel" aria-labelledby="tab-btn-radar">
+        <div id="radar-scan-banner" class="scan-radar-banner" hidden>
+          <div class="scan-sweep-ring" aria-hidden="true"></div>
+          <div class="scan-banner-copy">
+            <strong>АКТИВНОЕ СКАНИРОВАНИЕ КОНТУРОВ...</strong>
+            <span>Анализ кэшей, Downloads Inbox, ~/Projects и LIVE LOCK процессов</span>
+          </div>
+        </div>
+
+        <div class="panel-toolbar">
+          <div id="radar-category-chips" class="chip-group" role="group" aria-label="Фильтр категорий">
+            <button type="button" class="filter-chip is-active" data-cat="all">Все</button>
+            <button type="button" class="filter-chip" data-cat="pkg_cache">Пакетные кэши</button>
+            <button type="button" class="filter-chip" data-cat="app_cache">Кэши программ</button>
+            <button type="button" class="filter-chip" data-cat="downloads_inbox">Downloads Inbox</button>
+            <button type="button" class="filter-chip" data-cat="dev_projects">Проекты ~/Projects</button>
+            <button type="button" class="filter-chip" data-cat="ghost_dmgs">Образы DMG</button>
+          </div>
+
+          <div class="toolbar-right">
+            <div class="age-selector" role="group" aria-label="Порог давности проектов">
+              <span class="toolbar-caption">Возраст проектов:</span>
+              <button type="button" class="age-btn" data-days="14">14д</button>
+              <button type="button" class="age-btn is-active" data-days="30">30д</button>
+              <button type="button" class="age-btn" data-days="60">60д</button>
+            </div>
+
+            <button id="btn-select-all-ready" type="button" class="btn-cyber btn-cyber--outline">
+              Выбрать все доступные
+            </button>
+            <button id="btn-clear-radar-selection" type="button" class="btn-cyber btn-cyber--ghost btn-sm">
+              Сбросить
+            </button>
+            <button id="btn-rescan-radar" type="button" class="btn-cyber btn-cyber--cyan btn-sm">
+              Скан
+            </button>
+          </div>
+        </div>
+
+        <div class="summary-strip">
+          <div class="summary-stat">
+            <span class="summary-stat-label">Доступно к очистке</span>
+            <span id="sum-ready-bytes" class="summary-stat-val text-cyan">0 Б</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Под защитой LIVE LOCK</span>
+            <span id="sum-locked-bytes" class="summary-stat-val text-amber">0 Б</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Медиа для SSD</span>
+            <span id="sum-offload-bytes" class="summary-stat-val text-violet">0 Б</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Кандидаты organize</span>
+            <span id="sum-organize-count" class="summary-stat-val text-emerald">0</span>
+          </div>
+        </div>
+
+        <div id="radar-items-list" class="items-list" aria-live="polite"></div>
+
+        <div class="action-dock">
+          <div class="action-dock-info">
+            <span class="dock-selected-label">Выбрано: <strong id="radar-selected-count">0</strong></span>
+            <span class="dock-divider">|</span>
+            <span class="dock-selected-size">Объём: <strong id="radar-selected-bytes">0 Б</strong></span>
+            <span class="dock-divider">|</span>
+            <span id="radar-mode-hint" class="dock-mode-tag dock-mode-tag--safe">DRY-RUN СИМУЛЯЦИЯ</span>
+          </div>
+          <button id="btn-execute-clean" type="button" class="btn-plasma btn-plasma--cyan" disabled>
+            <span class="btn-plasma-glow" aria-hidden="true"></span>
+            <span id="btn-execute-clean-label">ОЧИСТИТЬ ВЫБРАННОЕ</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 2: ТЕЛЕПОРТ НА SSD -->
+      <section id="panel-teleport" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-teleport" hidden>
+        <div id="ssd-unmounted-alert" class="alert-banner alert-banner--amber" hidden>
+          <strong>Внешний SSD не подключён:</strong> том <code>/Volumes/secret for mine</code> недоступен. Подключите накопитель для реального SHA-256 телепорта или используйте <code>DRY-RUN</code>.
+        </div>
+
+        <div id="teleport-beam-panel" class="teleport-beam-card">
+          <div class="beam-endpoint">
+            <span class="beam-node-tag">ИСТОЧНИК</span>
+            <span class="beam-node-name">NVMe // Desktop &amp; Downloads</span>
+          </div>
+          <div class="beam-conduit">
+            <div class="beam-track">
+              <div class="beam-flow"></div>
+              <div class="beam-particles"></div>
+            </div>
+            <div id="teleport-beam-status" class="beam-status-text">ГОТОВ К SHA-256 ВЕРИФИКАЦИИ</div>
+          </div>
+          <div class="beam-endpoint beam-endpoint--dest">
+            <span class="beam-node-tag">НАЗНАЧЕНИЕ</span>
+            <span class="beam-node-name">APFS SSD // 04_Media_Archive</span>
+          </div>
+        </div>
+
+        <div class="panel-toolbar">
+          <div class="toolbar-left-info">
+            <span class="panel-note">Крупные видео и архивы (<code>.mov</code>, <code>.mp4</code>, <code>.mkv</code>). Перенос только после 100% совпадения размера и <strong>SHA-256</strong>.</span>
+          </div>
+          <div class="toolbar-right">
+            <button id="btn-select-all-media" type="button" class="btn-cyber btn-cyber--outline">
+              Выбрать все медиа
+            </button>
+            <button id="btn-clear-media-selection" type="button" class="btn-cyber btn-cyber--ghost btn-sm">
+              Сбросить
+            </button>
+          </div>
+        </div>
+
+        <div id="teleport-list" class="items-list" aria-live="polite"></div>
+
+        <div class="action-dock">
+          <div class="action-dock-info">
+            <span class="dock-selected-label">Файлов: <strong id="teleport-selected-count">0</strong></span>
+            <span class="dock-divider">|</span>
+            <span class="dock-selected-size">К переносу: <strong id="teleport-selected-bytes">0 Б</strong></span>
+            <span class="dock-divider">|</span>
+            <span id="teleport-mode-hint" class="dock-mode-tag dock-mode-tag--safe">DRY-RUN СИМУЛЯЦИЯ</span>
+          </div>
+          <button id="btn-execute-offload" type="button" class="btn-plasma btn-plasma--violet" disabled>
+            <span class="btn-plasma-glow" aria-hidden="true"></span>
+            <span>ТЕЛЕПОРТИРОВАТЬ НА SSD (SHA-256)</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 3: ДУБЛИКАТЫ -->
+      <section id="panel-duplicates" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-duplicates" hidden>
+        <div class="panel-toolbar">
+          <div id="dup-target-group" class="chip-group" role="group" aria-label="Целевая область поиска дубликатов">
+            <button type="button" class="filter-chip is-active" data-target="downloads">Downloads</button>
+            <button type="button" class="filter-chip" data-target="desktop">Desktop</button>
+            <button type="button" class="filter-chip" data-target="ssd_media">SSD Media</button>
+          </div>
+
+          <div class="toolbar-right">
+            <button id="btn-scan-duplicates" type="button" class="btn-cyber btn-cyber--cyan">
+              <svg viewBox="0 0 24 24" class="btn-icon" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <span>Сканировать дубликаты</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="summary-strip">
+          <div class="summary-stat">
+            <span class="summary-stat-label">Групп дубликатов</span>
+            <span id="dup-groups-count" class="summary-stat-val text-cyan">0</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Избыточный объём</span>
+            <span id="dup-wasted-bytes" class="summary-stat-val text-amber">0 Б</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat-label">Политика защиты</span>
+            <span class="summary-stat-val text-emerald">1-й файл = ОРИГИНАЛ · Только ~/.Trash</span>
+          </div>
+        </div>
+
+        <div id="duplicates-list" class="items-list" aria-live="polite"></div>
+
+        <div class="action-dock">
+          <div class="action-dock-info">
+            <span class="dock-selected-label">Копий в Корзину: <strong id="dup-selected-count">0</strong></span>
+            <span class="dock-divider">|</span>
+            <span class="dock-selected-size">Освободится: <strong id="dup-selected-bytes">0 Б</strong></span>
+          </div>
+          <button id="btn-trash-duplicates" type="button" class="btn-plasma btn-plasma--crimson" disabled>
+            <span class="btn-plasma-glow" aria-hidden="true"></span>
+            <span>УБРАТЬ ДУБЛИ В КОРЗИНУ</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 4: ПУЛЬТ КОНТУРОВ -->
+      <section id="panel-planes" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-planes" hidden>
+        <div class="planes-layout">
+          <div class="planes-section">
+            <div class="section-head">
+              <h3>Архитектура полок External SSD (<code>/Volumes/secret for mine</code>)</h3>
+              <span id="shelves-mount-pill" class="badge-chip badge-chip--violet">01..99</span>
+            </div>
+            <div id="shelves-grid" class="shelves-grid"></div>
+          </div>
+
+          <div class="planes-section">
+            <div class="section-head">
+              <h3>Быстрый запуск утилит и контуров</h3>
+              <span class="panel-note">Безопасный allowlist запуск без произвольных команд</span>
+            </div>
+            <div class="tool-launch-grid">
+              <button type="button" class="tool-btn hud-panel" data-tool="pearcleaner">
+                <span class="tool-btn-tag">UNINSTALLER</span>
+                <span class="tool-btn-title">Pearcleaner.app</span>
+                <span class="tool-btn-sub">Удаление хвостов приложений</span>
+              </button>
+
+              <button type="button" class="tool-btn hud-panel" data-tool="daisydisk">
+                <span class="tool-btn-tag">TREEMAP</span>
+                <span class="tool-btn-title">DaisyDisk.app</span>
+                <span class="tool-btn-sub">Визуальная карта дисков</span>
+              </button>
+
+              <button type="button" class="tool-btn hud-panel" data-tool="finder_ssd">
+                <span class="tool-btn-tag">PLANE 2</span>
+                <span class="tool-btn-title">Finder: Внешний SSD</span>
+                <span class="tool-btn-sub">/Volumes/secret for mine</span>
+              </button>
+
+              <button type="button" class="tool-btn hud-panel" data-tool="finder_downloads">
+                <span class="tool-btn-tag">INBOX</span>
+                <span class="tool-btn-title">Finder: Downloads</span>
+                <span class="tool-btn-sub">~/Downloads разбор</span>
+              </button>
+
+              <button type="button" class="tool-btn tool-btn--featured hud-panel" data-tool="digest">
+                <span class="tool-btn-tag">AUTO REPORT</span>
+                <span class="tool-btn-title">Открыть Воскресный дайджест</span>
+                <span class="tool-btn-sub">digest_latest.md в голо-окне</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="planes-section">
+            <div class="section-head">
+              <h3>Сводка 3 контуров</h3>
+            </div>
+            <div id="planes-detail-grid" class="planes-detail-grid"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom Collapsible Live SSE Cyber-Terminal -->
+    <section id="cyber-terminal" class="cyber-terminal hud-panel is-expanded" aria-label="Живой журнал событий SSE">
+      <div class="terminal-bar">
+        <button id="btn-toggle-terminal" type="button" class="terminal-toggle-btn" aria-expanded="true" aria-controls="terminal-body">
+          <span class="terminal-chevron" aria-hidden="true">&#9662;</span>
+          <span class="terminal-title">SSE КИБЕР-ТЕРМИНАЛ</span>
+          <span id="terminal-live-badge" class="terminal-badge">LIVE STREAM</span>
+          <span id="terminal-preview-line" class="terminal-preview">Инициализация подключения к /api/events...</span>
+        </button>
+
+        <div class="terminal-actions">
+          <span id="terminal-count" class="terminal-counter">0 строк</span>
+          <button id="btn-terminal-autoscroll" type="button" class="btn-cyber btn-cyber--ghost btn-xs is-toggled" aria-pressed="true">
+            Автоскролл
+          </button>
+          <button id="btn-terminal-clear" type="button" class="btn-cyber btn-cyber--ghost btn-xs">
+            Очистить
+          </button>
+        </div>
+      </div>
+
+      <div id="terminal-body" class="terminal-body">
+        <div id="terminal-log" class="terminal-log" role="log" aria-live="polite"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Holo Modal (Sunday Digest & Live Confirmation) -->
+  <div id="holo-modal" class="holo-modal" hidden role="dialog" aria-modal="true" aria-labelledby="holo-modal-title">
+    <div id="holo-modal-backdrop" class="holo-modal-backdrop"></div>
+    <div class="holo-modal-card hud-panel">
+      <div class="hud-corners" aria-hidden="true"><span></span><span></span></div>
+      <div class="holo-modal-head">
+        <div class="holo-modal-heading">
+          <span id="holo-modal-eyebrow" class="holo-modal-eyebrow">HOLO READER</span>
+          <h2 id="holo-modal-title" class="holo-modal-title">Модуль</h2>
+        </div>
+        <div class="holo-modal-head-actions">
+          <button id="holo-modal-copy" type="button" class="btn-cyber btn-cyber--ghost btn-sm" hidden>Копировать</button>
+          <button id="holo-modal-close" type="button" class="btn-cyber btn-cyber--ghost btn-sm" aria-label="Закрыть окно">Закрыть [ESC]</button>
+        </div>
+      </div>
+      <div id="holo-modal-content" class="holo-modal-content"></div>
+      <div id="holo-modal-footer" class="holo-modal-footer" hidden>
+        <button id="holo-modal-cancel" type="button" class="btn-cyber btn-cyber--ghost">Отмена</button>
+        <button id="holo-modal-confirm" type="button" class="btn-plasma btn-plasma--crimson">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
